@@ -153,6 +153,7 @@ from printer_agent import PrinterAgent
 from google_calendar_integration import GoogleCalendarIntegration
 from google_gmail_integration import GoogleGmailIntegration
 from weather_agent import WeatherAgent
+from route_agent import RouteAgent
 
 GOOGLE_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_token.json")
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
@@ -208,6 +209,7 @@ class AudioLoop:
         self.google_calendar = GoogleCalendarIntegration(token_path=GOOGLE_TOKEN_FILE)
         self.google_gmail = GoogleGmailIntegration(token_path=GOOGLE_TOKEN_FILE)
         self.weather_agent = WeatherAgent(settings_path=SETTINGS_FILE)
+        self.route_agent = RouteAgent()
 
         self.send_text_task = None
         self.stop_event = asyncio.Event()
@@ -1482,6 +1484,51 @@ class AudioLoop:
                                             "Full weather report konnte nicht abgerufen werden. "
                                             f"Details: {str(e)}"
                                         )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "route_plan":
+                                    origin = str(fc.args.get("origin", "") or "").strip()
+                                    destination = str(fc.args.get("destination", "") or "").strip()
+                                    mode = "driving"
+                                    alternatives = bool(fc.args.get("alternatives", False))
+
+                                    if not origin or not destination:
+                                        result_str = "Missing required fields. Provide origin and destination."
+                                    else:
+                                        try:
+                                            route = await asyncio.to_thread(
+                                                self.route_agent.plan_route,
+                                                origin,
+                                                destination,
+                                                mode,
+                                                alternatives,
+                                            )
+
+                                            self.emit_tool_view({
+                                                "type": "route",
+                                                "title": "Route Plan (Free)",
+                                                "route": route,
+                                            })
+
+                                            result_str = (
+                                                f"Route geplant ({route.get('mode', mode)}): "
+                                                f"{route.get('origin', {}).get('label', origin)} -> "
+                                                f"{route.get('destination', {}).get('label', destination)}. "
+                                                f"Distanz {route.get('distance_km', 'n/a')} km, "
+                                                f"Dauer {route.get('duration_human', str(route.get('duration_min', 'n/a')) + ' min')}. "
+                                                "Hinweis: Diese kostenlose Variante enthaelt keine Live-Verkehrsdaten."
+                                            )
+                                        except Exception as e:
+                                            result_str = (
+                                                "Route konnte nicht geplant werden. "
+                                                f"Details: {str(e)}"
+                                            )
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,

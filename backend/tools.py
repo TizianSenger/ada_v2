@@ -318,6 +318,29 @@ _get_weather_full_report_tool = {
     }
 }
 
+_route_plan_tool = {
+    "name": "route_plan",
+    "description": "Plan a route for driving by car using free OpenStreetMap services (Nominatim + OSRM) and return data for detail view map display.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "origin": {
+                "type": "STRING",
+                "description": "Start location, e.g. Ingolstadt or Geisenfeld,DE."
+            },
+            "destination": {
+                "type": "STRING",
+                "description": "Destination location, e.g. Munich or Berlin,DE."
+            },
+            "alternatives": {
+                "type": "BOOLEAN",
+                "description": "If true, request alternative routes."
+            }
+        },
+        "required": ["origin", "destination"]
+    }
+}
+
 _clear_detail_view_tool = {
     "name": "clear_detail_view",
     "description": "Clear the left detail view panel and return it to idle state.",
@@ -631,6 +654,7 @@ function_declarations = [
     _get_weather_tool,
     _get_weather_forecast_tool,
     _get_weather_full_report_tool,
+    _route_plan_tool,
     _clear_detail_view_tool,
     _list_calendar_events_tool,
     _get_calendar_view_tool,

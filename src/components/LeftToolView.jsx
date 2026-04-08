@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CloudSun, CalendarDays, Mail } from 'lucide-react';
+import { CloudSun, CalendarDays, Mail, Route } from 'lucide-react';
+import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
 
 const formatTime = (value) => {
     if (!value) return '-';
@@ -49,6 +51,7 @@ const ModeHeader = ({ activeMode }) => {
         { id: 'weather', label: 'Wetter', Icon: CloudSun },
         { id: 'calendar', label: 'Kalender', Icon: CalendarDays },
         { id: 'mail', label: 'Mail', Icon: Mail },
+        { id: 'route', label: 'Route', Icon: Route },
     ];
 
     return (
@@ -59,8 +62,8 @@ const ModeHeader = ({ activeMode }) => {
                     <div
                         key={id}
                         className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] uppercase tracking-wider border transition-all duration-300 ${isActive
-                                ? 'border-cyan-400/70 bg-cyan-500/15 text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.35)]'
-                                : 'border-cyan-900/50 bg-black/30 text-cyan-700/80'
+                            ? 'border-cyan-400/70 bg-cyan-500/15 text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.35)]'
+                            : 'border-cyan-900/50 bg-black/30 text-cyan-700/80'
                             }`}
                         title={label}
                     >
@@ -71,6 +74,17 @@ const ModeHeader = ({ activeMode }) => {
             })}
         </div>
     );
+};
+
+const RouteFitBounds = ({ geometry }) => {
+    const map = useMap();
+
+    useEffect(() => {
+        if (!Array.isArray(geometry) || geometry.length === 0) return;
+        map.fitBounds(geometry, { padding: [20, 20] });
+    }, [map, geometry]);
+
+    return null;
 };
 
 const WeatherView = ({ payload }) => {
@@ -192,6 +206,86 @@ const EmailListView = ({ payload }) => {
     );
 };
 
+const RouteView = ({ payload }) => {
+    const route = payload?.route || {};
+    const steps = Array.isArray(route?.steps) ? route.steps : [];
+    const geometry = Array.isArray(route?.geometry) ? route.geometry : [];
+    const fromLabel = route?.origin?.label || '-';
+    const toLabel = route?.destination?.label || '-';
+    const startPos = route?.origin?.lat && route?.origin?.lon ? [route.origin.lat, route.origin.lon] : null;
+    const endPos = route?.destination?.lat && route?.destination?.lon ? [route.destination.lat, route.destination.lon] : null;
+    const fallbackCenter = startPos || [48.7665, 11.4257];
+
+    return (
+        <div className="h-full w-full flex flex-col">
+            <div className="px-3 py-2 border-b border-cyan-900/40 bg-black/30">
+                <div className="text-cyan-300 text-xs uppercase tracking-wider font-bold">{payload?.title || 'Route Plan'}</div>
+                <div className="text-cyan-100/80 text-xs mt-1 truncate">Von: {fromLabel}</div>
+                <div className="text-cyan-100/80 text-xs truncate">Nach: {toLabel}</div>
+                <div className="text-cyan-200/80 text-xs mt-1">
+                    {route?.distance_km ?? 'n/a'} km | {route?.duration_human || `${route?.duration_min ?? 'n/a'} min`} | {route?.mode || 'driving'}
+                </div>
+                {route?.traffic_note && (
+                    <div className="text-[10px] text-yellow-300/80 mt-1">{route.traffic_note}</div>
+                )}
+            </div>
+            <div className="h-[48%] relative bg-black/40 border-b border-cyan-900/30">
+                {geometry.length > 1 ? (
+                    <MapContainer
+                        center={fallbackCenter}
+                        zoom={11}
+                        scrollWheelZoom={true}
+                        className="absolute inset-0 w-full h-full"
+                    >
+                        <TileLayer
+                            attribution='&copy; OpenStreetMap contributors'
+                            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        />
+                        <RouteFitBounds geometry={geometry} />
+                        <Polyline positions={geometry} pathOptions={{ color: '#22d3ee', weight: 5, opacity: 0.9 }} />
+                        {startPos && (
+                            <CircleMarker center={startPos} radius={6} pathOptions={{ color: '#34d399', fillColor: '#34d399', fillOpacity: 0.9 }}>
+                                <Popup>Start</Popup>
+                            </CircleMarker>
+                        )}
+                        {endPos && (
+                            <CircleMarker center={endPos} radius={6} pathOptions={{ color: '#f97316', fillColor: '#f97316', fillOpacity: 0.9 }}>
+                                <Popup>Ziel</Popup>
+                            </CircleMarker>
+                        )}
+                    </MapContainer>
+                ) : (
+                    <div className="h-full w-full flex flex-col items-center justify-center text-xs text-cyan-400/70 px-4 text-center gap-2">
+                        <div>Keine Kartenlinie verfuegbar.</div>
+                        {route?.osm_directions_url && (
+                            <a
+                                href={route.osm_directions_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-cyan-300 underline"
+                            >
+                                Route in OpenStreetMap oeffnen
+                            </a>
+                        )}
+                    </div>
+                )}
+            </div>
+            <div className="flex-1 overflow-auto scrollbar-hide p-3 space-y-2">
+                <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Schritte</div>
+                {steps.length === 0 && (
+                    <div className="text-xs text-cyan-400/70">Keine Schrittliste verfuegbar.</div>
+                )}
+                {steps.map((step, idx) => (
+                    <div key={`${idx}-${step.instruction || ''}`} className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="text-cyan-100/90 text-xs">{idx + 1}. {step.instruction || 'Weiter'}</div>
+                        <div className="text-cyan-400/80 text-[11px] mt-1">{step.distance_km ?? 'n/a'} km</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 const LeftToolView = ({ payload }) => {
     const [fadeKey, setFadeKey] = useState(0);
 
@@ -200,6 +294,7 @@ const LeftToolView = ({ payload }) => {
         if (payload.type === 'weather') return 'weather';
         if (payload.type === 'calendar') return 'calendar';
         if (payload.type === 'email' || payload.type === 'email_list') return 'mail';
+        if (payload.type === 'route') return 'route';
         return 'none';
     }, [payload]);
 
@@ -212,6 +307,7 @@ const LeftToolView = ({ payload }) => {
     if (payload?.type === 'calendar') content = <CalendarView payload={payload} />;
     if (payload?.type === 'email') content = <EmailView payload={payload} />;
     if (payload?.type === 'email_list') content = <EmailListView payload={payload} />;
+    if (payload?.type === 'route') content = <RouteView payload={payload} />;
     if (payload?.type === 'clear') content = <EmptyState />;
 
     return (

@@ -84,6 +84,7 @@ DEFAULT_SETTINGS = {
         "get_weather": True,
         "get_weather_forecast": True,
         "get_weather_full_report": True,
+        "route_plan": True,
         "clear_detail_view": True,
         "list_calendar_events": True,
         "get_calendar_view": True,
