@@ -158,6 +158,46 @@ class GoogleCalendarIntegration:
 
         return normalized
 
+    def list_events_range(self, days: int = 1, max_results: int = 30) -> List[Dict[str, Any]]:
+        days = max(1, min(int(days), 7))
+        max_results = max(1, min(int(max_results), 100))
+
+        creds = self.get_credentials(scopes=DEFAULT_SCOPES)
+        service = build("calendar", "v3", credentials=creds)
+
+        start_dt = datetime.now(timezone.utc)
+        end_dt = start_dt + timedelta(days=days)
+
+        events_result = (
+            service.events()
+            .list(
+                calendarId="primary",
+                timeMin=start_dt.isoformat(),
+                timeMax=end_dt.isoformat(),
+                maxResults=max_results,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+
+        events = events_result.get("items", [])
+        normalized = []
+        for event in events:
+            start = event.get("start", {}).get("dateTime") or event.get("start", {}).get("date")
+            end = event.get("end", {}).get("dateTime") or event.get("end", {}).get("date")
+            normalized.append(
+                {
+                    "summary": event.get("summary", "(No title)"),
+                    "start": start,
+                    "end": end,
+                    "location": event.get("location"),
+                    "id": event.get("id"),
+                }
+            )
+
+        return normalized
+
     def _find_candidate_events(
         self,
         query: str = "",

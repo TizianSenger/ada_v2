@@ -107,11 +107,13 @@ from kasa_agent import KasaAgent
 from printer_agent import PrinterAgent
 from google_calendar_integration import GoogleCalendarIntegration
 from google_gmail_integration import GoogleGmailIntegration
+from weather_agent import WeatherAgent
 
 GOOGLE_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_token.json")
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
 class AudioLoop:
-    def __init__(self, video_mode=DEFAULT_MODE, on_audio_data=None, on_video_frame=None, on_cad_data=None, on_web_data=None, on_transcription=None, on_tool_confirmation=None, on_cad_status=None, on_cad_thought=None, on_project_update=None, on_device_update=None, on_error=None, input_device_index=None, input_device_name=None, output_device_index=None, kasa_agent=None):
+    def __init__(self, video_mode=DEFAULT_MODE, on_audio_data=None, on_video_frame=None, on_cad_data=None, on_web_data=None, on_transcription=None, on_tool_confirmation=None, on_cad_status=None, on_cad_thought=None, on_project_update=None, on_device_update=None, on_error=None, on_tool_view=None, input_device_index=None, input_device_name=None, output_device_index=None, kasa_agent=None):
         self.video_mode = video_mode
         self.on_audio_data = on_audio_data
         self.on_video_frame = on_video_frame
@@ -124,6 +126,7 @@ class AudioLoop:
         self.on_project_update = on_project_update
         self.on_device_update = on_device_update
         self.on_error = on_error
+        self.on_tool_view = on_tool_view
         self.input_device_index = input_device_index
         self.input_device_name = input_device_name
         self.output_device_index = output_device_index
@@ -159,6 +162,7 @@ class AudioLoop:
         self.printer_agent = PrinterAgent()
         self.google_calendar = GoogleCalendarIntegration(token_path=GOOGLE_TOKEN_FILE)
         self.google_gmail = GoogleGmailIntegration(token_path=GOOGLE_TOKEN_FILE)
+        self.weather_agent = WeatherAgent(settings_path=SETTINGS_FILE)
 
         self.send_text_task = None
         self.stop_event = asyncio.Event()
@@ -232,6 +236,14 @@ class AudioLoop:
                 print(f"[ADA DEBUG] [AUDIO] Cleared {count} chunks from playback queue due to interruption.")
         except Exception as e:
             print(f"[ADA DEBUG] [ERR] Failed to clear audio queue: {e}")
+
+    def emit_tool_view(self, payload):
+        if not self.on_tool_view or not isinstance(payload, dict):
+            return
+        try:
+            self.on_tool_view(payload)
+        except Exception as e:
+            print(f"[ADA DEBUG] [WARN] Failed to emit tool view: {e}")
 
     async def send_frame(self, frame_data):
         # Update the latest frame payload
@@ -1019,6 +1031,12 @@ class AudioLoop:
 
                                     try:
                                         events = await asyncio.to_thread(self.google_calendar.list_upcoming_events, max_results)
+                                        self.emit_tool_view({
+                                            "type": "calendar",
+                                            "view": "upcoming",
+                                            "title": "Kalender - Kommende Termine",
+                                            "events": events,
+                                        })
                                         if not events:
                                             result_str = "No upcoming events found in your primary Google Calendar."
                                         else:
@@ -1039,6 +1057,45 @@ class AudioLoop:
                                             "Open Settings and connect your Google account first. "
                                             f"Details: {str(e)}"
                                         )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "get_calendar_view":
+                                    view_mode = str(fc.args.get("view", "today") or "today").strip().lower()
+                                    max_results = int(fc.args.get("max_results", 30) or 30)
+                                    max_results = max(1, min(max_results, 100))
+                                    days = 7 if view_mode == "week" else 1
+
+                                    try:
+                                        events = await asyncio.to_thread(
+                                            self.google_calendar.list_events_range,
+                                            days,
+                                            max_results,
+                                        )
+                                        title = "Kalender - Diese Woche" if days == 7 else "Kalender - Heute"
+                                        self.emit_tool_view({
+                                            "type": "calendar",
+                                            "view": "week" if days == 7 else "today",
+                                            "title": title,
+                                            "events": events,
+                                        })
+
+                                        if not events:
+                                            result_str = f"Keine Kalendereintraege fuer {view_mode} gefunden."
+                                        else:
+                                            lines = []
+                                            for event in events:
+                                                lines.append(
+                                                    f"- {event.get('summary', '(No title)')} | {event.get('start', 'unknown')}"
+                                                )
+                                            result_str = f"Kalenderansicht ({view_mode}):\n" + "\n".join(lines)
+                                    except Exception as e:
+                                        result_str = f"Kalenderansicht konnte nicht geladen werden. Details: {str(e)}"
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,
@@ -1267,6 +1324,138 @@ class AudioLoop:
                                     )
                                     function_responses.append(function_response)
 
+                                elif fc.name == "get_weather":
+                                    location = str(fc.args.get("location", "") or "").strip()
+                                    units = str(fc.args.get("units", "metric") or "metric").strip()
+
+                                    try:
+                                        weather = await asyncio.to_thread(
+                                            self.weather_agent.get_current_weather,
+                                            location,
+                                            units,
+                                            "de",
+                                        )
+                                        self.emit_tool_view({
+                                            "type": "weather",
+                                            "title": "Wetterkarte",
+                                            "weather": weather,
+                                        })
+                                        place = weather.get("location", location or "default location")
+                                        country = weather.get("country")
+                                        label = f"{place}, {country}" if country else place
+                                        result_str = (
+                                            f"Wetter fuer {label}: {weather.get('description', 'n/a')}. "
+                                            f"Temperatur {weather.get('temperature', 'n/a')}°, "
+                                            f"gefuehlt {weather.get('feels_like', 'n/a')}°, "
+                                            f"Luftfeuchtigkeit {weather.get('humidity', 'n/a')}%, "
+                                            f"Wind {weather.get('wind_speed', 'n/a')} m/s."
+                                        )
+                                    except Exception as e:
+                                        result_str = (
+                                            "Wetterdaten konnten nicht abgerufen werden. "
+                                            f"Details: {str(e)}"
+                                        )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "get_weather_forecast":
+                                    location = str(fc.args.get("location", "") or "").strip()
+                                    units = str(fc.args.get("units", "metric") or "metric").strip()
+                                    date_hint = str(fc.args.get("date_hint", "") or "").strip()
+                                    days = int(fc.args.get("days", 3) or 3)
+
+                                    try:
+                                        forecast = await asyncio.to_thread(
+                                            self.weather_agent.get_forecast,
+                                            location,
+                                            units,
+                                            "de",
+                                            date_hint,
+                                            days,
+                                        )
+                                        self.emit_tool_view({
+                                            "type": "weather",
+                                            "title": "Wetterkarte & Forecast",
+                                            "forecast": forecast,
+                                        })
+                                        place = forecast.get("location", location or "default location")
+                                        country = forecast.get("country")
+                                        label = f"{place}, {country}" if country else place
+
+                                        lines = []
+                                        for day in forecast.get("days", []) or []:
+                                            lines.append(
+                                                f"- {day.get('date')}: {day.get('description', 'n/a')}, "
+                                                f"{day.get('temp_min', 'n/a')} bis {day.get('temp_max', 'n/a')}°, "
+                                                f"Feuchte ~{day.get('humidity_avg', 'n/a')}%, "
+                                                f"Wind ~{day.get('wind_avg', 'n/a')} m/s"
+                                            )
+
+                                        if not lines:
+                                            result_str = f"Keine Forecast-Daten fuer {label} verfuegbar."
+                                        else:
+                                            result_str = f"Vorhersage fuer {label}:\n" + "\n".join(lines)
+                                    except Exception as e:
+                                        result_str = (
+                                            "Forecast konnte nicht abgerufen werden. "
+                                            f"Details: {str(e)}"
+                                        )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "get_weather_full_report":
+                                    location = str(fc.args.get("location", "") or "").strip()
+                                    units = str(fc.args.get("units", "metric") or "metric").strip()
+                                    date_hint = str(fc.args.get("date_hint", "") or "").strip()
+                                    days = int(fc.args.get("days", 3) or 3)
+                                    include_raw = bool(fc.args.get("include_raw", False))
+
+                                    try:
+                                        report = await asyncio.to_thread(
+                                            self.weather_agent.get_full_weather_report,
+                                            location,
+                                            units,
+                                            "de",
+                                            date_hint,
+                                            days,
+                                            include_raw,
+                                        )
+                                        result_str = "Full weather report (OpenWeather free plan endpoints):\n"
+                                        result_str += json.dumps(report, ensure_ascii=False, indent=2)
+                                    except Exception as e:
+                                        result_str = (
+                                            "Full weather report konnte nicht abgerufen werden. "
+                                            f"Details: {str(e)}"
+                                        )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "clear_detail_view":
+                                    self.emit_tool_view({"type": "clear", "title": "Detail View"})
+                                    result_str = "Detail view wurde geleert und auf Idle zurueckgesetzt."
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
                                 elif fc.name == "list_gmail_messages":
                                     max_results = int(fc.args.get("max_results", 5) or 5)
                                     max_results = max(1, min(max_results, 20))
@@ -1282,6 +1471,11 @@ class AudioLoop:
                                             max_results,
                                             query or None,
                                         )
+                                        self.emit_tool_view({
+                                            "type": "email_list",
+                                            "title": "Gmail - Nachrichten",
+                                            "messages": msgs,
+                                        })
                                         if not msgs:
                                             result_str = "No Gmail messages found for the given query."
                                         else:
@@ -1302,6 +1496,45 @@ class AudioLoop:
                                             "Authorize Google Workspace first. "
                                             f"Details: {str(e)}"
                                         )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "get_gmail_message_detail":
+                                    message_id = str(fc.args.get("message_id", "") or "").strip()
+                                    query = str(fc.args.get("query", "") or "").strip()
+
+                                    if not message_id and not query:
+                                        result_str = "Missing identifier. Provide message_id or query."
+                                    else:
+                                        try:
+                                            detail = await asyncio.to_thread(
+                                                self.google_gmail.get_message_detail,
+                                                message_id,
+                                                query or None,
+                                            )
+                                            self.emit_tool_view({
+                                                "type": "email",
+                                                "title": "Gmail - E-Mail Detail",
+                                                "email": detail,
+                                            })
+                                            body = str(detail.get("body", "") or "").strip()
+                                            preview = body[:600] + ("..." if len(body) > 600 else "")
+                                            result_str = (
+                                                f"Email geladen: {detail.get('subject', '(No subject)')}\n"
+                                                f"Von: {detail.get('from', 'Unknown sender')}\n"
+                                                f"Datum: {detail.get('date', 'Unknown date')}\n"
+                                                f"Inhalt:\n{preview}"
+                                            )
+                                        except Exception as e:
+                                            result_str = (
+                                                "Email-Detail konnte nicht geladen werden. "
+                                                f"Details: {str(e)}"
+                                            )
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,

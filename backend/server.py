@@ -26,6 +26,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import ada
 from authenticator import FaceAuthenticator
 from kasa_agent import KasaAgent
+from google_calendar_integration import GoogleCalendarIntegration
+from google_gmail_integration import GoogleGmailIntegration
 
 # Create a Socket.IO server
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
@@ -56,6 +58,8 @@ audio_loop = None
 loop_task = None
 authenticator = None
 kasa_agent = KasaAgent()
+google_calendar = GoogleCalendarIntegration()
+google_gmail = GoogleGmailIntegration()
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
 DEFAULT_SETTINGS = {
@@ -77,19 +81,26 @@ DEFAULT_SETTINGS = {
         "get_print_status": True,
         "connect_google_workspace": True,
         "get_current_datetime": True,
+        "get_weather": True,
+        "get_weather_forecast": True,
+        "get_weather_full_report": True,
+        "clear_detail_view": True,
         "list_calendar_events": True,
+        "get_calendar_view": True,
         "create_calendar_event": True,
         "update_calendar_event": True,
         "delete_calendar_event": True,
         "list_calendar_invitations": True,
         "respond_calendar_invitation": True,
         "list_gmail_messages": True,
+        "get_gmail_message_detail": True,
         "list_gmail_labels": True,
         "update_gmail_labels": True,
         "send_gmail_message": True,
     },
     "printers": [], # List of {host, port, name, type}
     "kasa_devices": [], # List of {ip, alias, model}
+    "default_weather_location": "Berlin,DE",
     "camera_flipped": False, # Invert cursor horizontal direction
     "gemini_api_key": ""
 }
@@ -402,6 +413,10 @@ async def start_audio(sid, data=None):
         print(f"Sending Error to frontend: {msg}")
         asyncio.create_task(sio.emit('error', {'msg': msg}))
 
+    # Callback to send structured tool views to the left companion panel
+    def on_tool_view(data):
+        asyncio.create_task(sio.emit('left_panel_view', data, room=sid))
+
     # Initialize ADA
     try:
         print(f"Initializing AudioLoop with device_index={device_index}")
@@ -417,6 +432,7 @@ async def start_audio(sid, data=None):
             on_project_update=on_project_update,
             on_device_update=on_device_update,
             on_error=on_error,
+            on_tool_view=on_tool_view,
 
             input_device_index=device_index,
             input_device_name=device_name,
@@ -1067,6 +1083,47 @@ async def control_kasa(sid, data):
 async def get_settings(sid):
     await sio.emit('settings', _settings_for_client())
 
+
+@sio.event
+async def connect_google_workspace(sid, data=None):
+    payload = data or {}
+    force_reauth = bool(payload.get("force_reauth", False))
+    creds_path = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_credentials.json"))
+
+    if not creds_path.exists():
+        msg = "Google credentials fehlen: backend/google_credentials.json wurde nicht gefunden."
+        await sio.emit('google_workspace_connection_result', {'ok': False, 'message': msg}, room=sid)
+        return
+
+    try:
+        raw = json.loads(creds_path.read_text(encoding="utf-8"))
+        installed = raw.get("installed", {}) if isinstance(raw, dict) else {}
+        client_id = str(installed.get("client_id", "") or "").strip()
+        client_secret = str(installed.get("client_secret", "") or "").strip()
+
+        if (
+            not client_id
+            or not client_secret
+            or "YOUR_GOOGLE_CLIENT_ID" in client_id
+            or "YOUR_GOOGLE_CLIENT_SECRET" in client_secret
+        ):
+            msg = "Google credentials sind noch Platzhalter. Bitte backend/google_credentials.json mit echten Werten fuellen."
+            await sio.emit('google_workspace_connection_result', {'ok': False, 'message': msg}, room=sid)
+            return
+    except Exception as e:
+        msg = f"Google credentials konnten nicht gelesen werden: {str(e)}"
+        await sio.emit('google_workspace_connection_result', {'ok': False, 'message': msg}, room=sid)
+        return
+
+    try:
+        await asyncio.to_thread(google_calendar.connect, force_reauth)
+        await asyncio.to_thread(google_gmail.connect, force_reauth)
+        msg = "Google Workspace erfolgreich verbunden. Calendar und Gmail sind bereit."
+        await sio.emit('google_workspace_connection_result', {'ok': True, 'message': msg}, room=sid)
+    except Exception as e:
+        msg = f"Google OAuth fehlgeschlagen: {str(e)}"
+        await sio.emit('google_workspace_connection_result', {'ok': False, 'message': msg}, room=sid)
+
 @sio.event
 async def update_settings(sid, data):
     # Generic update
@@ -1090,6 +1147,10 @@ async def update_settings(sid, data):
     if "camera_flipped" in data:
         SETTINGS["camera_flipped"] = data["camera_flipped"]
         print(f"[SERVER] Camera flip set to: {data['camera_flipped']}")
+
+    if "default_weather_location" in data:
+        SETTINGS["default_weather_location"] = str(data.get("default_weather_location", "") or "").strip() or "Berlin,DE"
+        print(f"[SERVER] Default weather location set to: {SETTINGS['default_weather_location']}")
 
     if "gemini_api_key" in data:
         new_key = str(data.get("gemini_api_key", "") or "").strip()

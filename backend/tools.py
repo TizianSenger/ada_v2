@@ -244,6 +244,89 @@ _get_current_datetime_tool = {
     }
 }
 
+_get_weather_tool = {
+    "name": "get_weather",
+    "description": "Get current weather data for a location using OpenWeatherMap. If location is omitted, uses default weather location from settings.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "location": {
+                "type": "STRING",
+                "description": "City/location query, e.g. Berlin,DE or Munich. Optional."
+            },
+            "units": {
+                "type": "STRING",
+                "description": "metric, imperial, or standard. Optional, defaults to metric."
+            }
+        }
+    }
+}
+
+_get_weather_forecast_tool = {
+    "name": "get_weather_forecast",
+    "description": "Get short-term weather forecast. Supports hints like morgen/tomorrow and wochenende/weekend.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "location": {
+                "type": "STRING",
+                "description": "City/location query, e.g. Berlin,DE or Munich. Optional."
+            },
+            "units": {
+                "type": "STRING",
+                "description": "metric, imperial, or standard. Optional, defaults to metric."
+            },
+            "date_hint": {
+                "type": "STRING",
+                "description": "Optional hint like morgen, tomorrow, wochenende, weekend."
+            },
+            "days": {
+                "type": "NUMBER",
+                "description": "Number of forecast days to summarize (1-5). Optional, defaults to 3."
+            }
+        }
+    }
+}
+
+_get_weather_full_report_tool = {
+    "name": "get_weather_full_report",
+    "description": "Get a comprehensive weather report (current + forecast data fields available in OpenWeather free plan endpoints).",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "location": {
+                "type": "STRING",
+                "description": "City/location query, e.g. Berlin,DE or Munich. Optional."
+            },
+            "units": {
+                "type": "STRING",
+                "description": "metric, imperial, or standard. Optional, defaults to metric."
+            },
+            "date_hint": {
+                "type": "STRING",
+                "description": "Optional hint like morgen, tomorrow, wochenende, weekend."
+            },
+            "days": {
+                "type": "NUMBER",
+                "description": "Number of forecast days to summarize (1-5). Optional, defaults to 3."
+            },
+            "include_raw": {
+                "type": "BOOLEAN",
+                "description": "If true, include raw API payload sections."
+            }
+        }
+    }
+}
+
+_clear_detail_view_tool = {
+    "name": "clear_detail_view",
+    "description": "Clear the left detail view panel and return it to idle state.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+    }
+}
+
 _list_calendar_events_tool = {
     "name": "list_calendar_events",
     "description": "List upcoming events from the primary Google Calendar.",
@@ -253,6 +336,24 @@ _list_calendar_events_tool = {
             "max_results": {
                 "type": "NUMBER",
                 "description": "Maximum events to list (1-20)."
+            }
+        }
+    }
+}
+
+_get_calendar_view_tool = {
+    "name": "get_calendar_view",
+    "description": "Get a calendar view for today or this week from Google Calendar.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "view": {
+                "type": "STRING",
+                "description": "Either 'today' or 'week'. Defaults to 'today'."
+            },
+            "max_results": {
+                "type": "NUMBER",
+                "description": "Maximum events to return (1-100)."
             }
         }
     }
@@ -432,6 +533,24 @@ _list_gmail_messages_tool = {
     }
 }
 
+_get_gmail_message_detail_tool = {
+    "name": "get_gmail_message_detail",
+    "description": "Get full details and body text for one Gmail message.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "message_id": {
+                "type": "STRING",
+                "description": "Gmail message ID. Optional if query is provided."
+            },
+            "query": {
+                "type": "STRING",
+                "description": "Optional Gmail search query used to find the newest matching email if message_id is omitted."
+            }
+        }
+    }
+}
+
 _list_gmail_labels_tool = {
     "name": "list_gmail_labels",
     "description": "List available Gmail labels including custom labels.",
@@ -509,13 +628,19 @@ function_declarations = [
     _get_print_status_tool,
     _connect_google_tool,
     _get_current_datetime_tool,
+    _get_weather_tool,
+    _get_weather_forecast_tool,
+    _get_weather_full_report_tool,
+    _clear_detail_view_tool,
     _list_calendar_events_tool,
+    _get_calendar_view_tool,
     _create_calendar_event_tool,
     _update_calendar_event_tool,
     _delete_calendar_event_tool,
     _list_calendar_invitations_tool,
     _respond_calendar_invitation_tool,
     _list_gmail_messages_tool,
+    _get_gmail_message_detail_tool,
     _list_gmail_labels_tool,
     _update_gmail_labels_tool,
     _send_gmail_message_tool,

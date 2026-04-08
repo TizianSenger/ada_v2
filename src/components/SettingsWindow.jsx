@@ -16,15 +16,21 @@ const TOOLS = [
     { id: 'print_stl', label: 'Print 3D Model' },
     { id: 'get_print_status', label: 'Get Print Status' },
     { id: 'get_current_datetime', label: 'Get Current DateTime' },
+    { id: 'get_weather', label: 'Get Weather' },
+    { id: 'get_weather_forecast', label: 'Get Weather Forecast' },
+    { id: 'get_weather_full_report', label: 'Get Weather Full Report' },
+    { id: 'clear_detail_view', label: 'Clear Detail View' },
     { id: 'iterate_cad', label: 'Iterate CAD' },
     { id: 'connect_google_workspace', label: 'Connect Google Workspace' },
     { id: 'list_calendar_events', label: 'List Calendar Events' },
+    { id: 'get_calendar_view', label: 'Get Calendar View' },
     { id: 'create_calendar_event', label: 'Create Calendar Event' },
     { id: 'update_calendar_event', label: 'Update Calendar Event' },
     { id: 'delete_calendar_event', label: 'Delete Calendar Event' },
     { id: 'list_calendar_invitations', label: 'List Calendar Invitations' },
     { id: 'respond_calendar_invitation', label: 'Respond Calendar Invitation' },
     { id: 'list_gmail_messages', label: 'List Gmail Messages' },
+    { id: 'get_gmail_message_detail', label: 'Get Gmail Message Detail' },
     { id: 'list_gmail_labels', label: 'List Gmail Labels' },
     { id: 'update_gmail_labels', label: 'Update Gmail Labels' },
     { id: 'send_gmail_message', label: 'Send Gmail Message' },
@@ -53,6 +59,10 @@ const SettingsWindow = ({
     const [apiKeyInput, setApiKeyInput] = useState('');
     const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
     const [apiKeyMessage, setApiKeyMessage] = useState('');
+    const [googleConnectMessage, setGoogleConnectMessage] = useState('');
+    const [googleConnecting, setGoogleConnecting] = useState(false);
+    const [defaultWeatherLocation, setDefaultWeatherLocation] = useState('Berlin,DE');
+    const [weatherMessage, setWeatherMessage] = useState('');
 
     useEffect(() => {
         // Request initial permissions
@@ -68,15 +78,25 @@ const SettingsWindow = ({
                     localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
                 }
                 setApiKeyConfigured(Boolean(settings.gemini_api_key_configured));
+                setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
             }
         };
 
+        const handleGoogleConnectionResult = (result) => {
+            const ok = Boolean(result?.ok);
+            const msg = String(result?.message || '').trim() || (ok ? 'Google connected.' : 'Google connect failed.');
+            setGoogleConnectMessage(msg);
+            setGoogleConnecting(false);
+        };
+
         socket.on('settings', handleSettings);
+        socket.on('google_workspace_connection_result', handleGoogleConnectionResult);
         // Also listen for legacy tool_permissions if needed, but 'settings' covers it
         // socket.on('tool_permissions', handlePermissions); 
 
         return () => {
             socket.off('settings', handleSettings);
+            socket.off('google_workspace_connection_result', handleGoogleConnectionResult);
         };
     }, [socket]);
 
@@ -115,6 +135,25 @@ const SettingsWindow = ({
         setApiKeyInput('');
         setApiKeyConfigured(true);
         setApiKeyMessage('API key saved. Start or restart ADA to use it.');
+    };
+
+    const connectGoogleWorkspace = (forceReauth = false) => {
+        setGoogleConnecting(true);
+        setGoogleConnectMessage(
+            forceReauth ? 'Starting Google reconnect with consent screen...' : 'Starting Google connection...'
+        );
+        socket.emit('connect_google_workspace', { force_reauth: forceReauth });
+    };
+
+    const saveWeatherLocation = () => {
+        const trimmed = defaultWeatherLocation.trim();
+        if (!trimmed) {
+            setWeatherMessage('Please enter a valid location (e.g. Berlin,DE).');
+            return;
+        }
+
+        socket.emit('update_settings', { default_weather_location: trimmed });
+        setWeatherMessage('Default weather location saved.');
     };
 
     return (
@@ -165,6 +204,57 @@ const SettingsWindow = ({
                 </div>
                 {apiKeyMessage && (
                     <p className="mt-1 text-[10px] text-cyan-300/80">{apiKeyMessage}</p>
+                )}
+            </div>
+
+            {/* Google Workspace */}
+            <div className="mb-6">
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">Google Workspace</h3>
+                <div className="text-[10px] text-cyan-500/70 mb-2">
+                    Start OAuth directly from Settings. No voice prompt required.
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => connectGoogleWorkspace(false)}
+                        disabled={googleConnecting}
+                        className="flex-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                    >
+                        Connect
+                    </button>
+                    <button
+                        onClick={() => connectGoogleWorkspace(true)}
+                        disabled={googleConnecting}
+                        className="flex-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-900/70 hover:bg-cyan-800 text-white disabled:opacity-50"
+                    >
+                        Reconnect
+                    </button>
+                </div>
+                {googleConnectMessage && (
+                    <p className="mt-2 text-[10px] text-cyan-300/80">{googleConnectMessage}</p>
+                )}
+            </div>
+
+            {/* Weather Defaults */}
+            <div className="mb-6">
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">Weather</h3>
+                <input
+                    type="text"
+                    value={defaultWeatherLocation}
+                    onChange={(e) => setDefaultWeatherLocation(e.target.value)}
+                    placeholder="Default location (e.g. Berlin,DE)"
+                    className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                />
+                <div className="flex items-center justify-between mt-2">
+                    <span className="text-[10px] text-cyan-500/70">OPENWEATHER_API_KEY in .env required</span>
+                    <button
+                        onClick={saveWeatherLocation}
+                        className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                    >
+                        Save Location
+                    </button>
+                </div>
+                {weatherMessage && (
+                    <p className="mt-1 text-[10px] text-cyan-300/80">{weatherMessage}</p>
                 )}
             </div>
 

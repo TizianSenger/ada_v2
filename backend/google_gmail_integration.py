@@ -1,4 +1,5 @@
 import base64
+import re
 from email.mime.text import MIMEText
 from typing import List, Dict, Any, Optional
 
@@ -87,6 +88,105 @@ class GoogleGmailIntegration:
             }
             for label in labels
         ]
+
+    def _decode_gmail_body_data(self, payload_data: str) -> str:
+        if not payload_data:
+            return ""
+        try:
+            padding = "=" * ((4 - len(payload_data) % 4) % 4)
+            decoded = base64.urlsafe_b64decode((payload_data + padding).encode("utf-8"))
+            return decoded.decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    def _extract_best_body_text(self, payload: Dict[str, Any]) -> str:
+        # Prefer text/plain, then text/html stripped to readable text.
+        plain_candidates: List[str] = []
+        html_candidates: List[str] = []
+
+        def walk(part: Dict[str, Any]):
+            mime_type = str(part.get("mimeType", "") or "").lower()
+            body = part.get("body", {}) or {}
+            data = body.get("data")
+
+            if data:
+                text = self._decode_gmail_body_data(data)
+                if text:
+                    if mime_type == "text/plain":
+                        plain_candidates.append(text)
+                    elif mime_type == "text/html":
+                        html_candidates.append(text)
+
+            for child in part.get("parts", []) or []:
+                if isinstance(child, dict):
+                    walk(child)
+
+        walk(payload or {})
+
+        if plain_candidates:
+            return "\n\n".join([t.strip() for t in plain_candidates if t.strip()]).strip()
+
+        if html_candidates:
+            raw_html = "\n\n".join([t for t in html_candidates if t])
+            text = re.sub(r"<br\s*/?>", "\n", raw_html, flags=re.IGNORECASE)
+            text = re.sub(r"</p>", "\n\n", text, flags=re.IGNORECASE)
+            text = re.sub(r"<[^>]+>", "", text)
+            text = re.sub(r"\n{3,}", "\n\n", text)
+            return text.strip()
+
+        return ""
+
+    def get_message_detail(self, message_id: str = "", query: Optional[str] = None) -> Dict[str, Any]:
+        creds = self._oauth.get_credentials(scopes=DEFAULT_SCOPES)
+        service = build("gmail", "v1", credentials=creds)
+
+        resolved_message_id = str(message_id or "").strip()
+        if not resolved_message_id:
+            lookup = service.users().messages().list(
+                userId="me",
+                maxResults=1,
+                q=(query or "").strip() or None,
+            ).execute()
+            items = lookup.get("messages", [])
+            if not items:
+                raise RuntimeError(
+                    "Keine passende Nachricht gefunden. Bitte message_id angeben oder eine praezisere query nutzen."
+                )
+            resolved_message_id = str(items[0].get("id") or "").strip()
+            if not resolved_message_id:
+                raise RuntimeError("Nachrichten-ID konnte nicht aufgeloest werden.")
+
+        try:
+            detail = service.users().messages().get(
+                userId="me",
+                id=resolved_message_id,
+                format="full",
+            ).execute()
+        except Exception as e:
+            raise RuntimeError(
+                _format_google_api_error(
+                    e,
+                    "Gmail",
+                    "https://console.cloud.google.com/apis/library/gmail.googleapis.com",
+                )
+            )
+
+        payload = detail.get("payload", {}) or {}
+        headers = payload.get("headers", []) or []
+        header_map = {str(h.get("name", "") or "").lower(): h.get("value") for h in headers}
+        body_text = self._extract_best_body_text(payload)
+
+        return {
+            "id": resolved_message_id,
+            "threadId": detail.get("threadId"),
+            "subject": header_map.get("subject", "(No subject)"),
+            "from": header_map.get("from", "Unknown sender"),
+            "to": header_map.get("to", "Unknown recipient"),
+            "date": header_map.get("date", "Unknown date"),
+            "snippet": detail.get("snippet", ""),
+            "body": body_text,
+            "labelIds": detail.get("labelIds", []),
+        }
 
     def update_message_labels(
         self,

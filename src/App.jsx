@@ -15,6 +15,7 @@ import AuthLock from './components/AuthLock';
 import KasaWindow from './components/KasaWindow';
 import PrinterWindow from './components/PrinterWindow';
 import SettingsWindow from './components/SettingsWindow';
+import LeftToolView from './components/LeftToolView';
 
 
 
@@ -76,6 +77,7 @@ function App() {
     });
     const [quotaModels, setQuotaModels] = useState({});
     const [isQuotaChecking, setIsQuotaChecking] = useState(false);
+    const [leftPanelView, setLeftPanelView] = useState(null);
 
 
     // RESTORED STATE
@@ -577,6 +579,10 @@ function App() {
             addMessage('System', `Switched to project: ${data.project}`);
         });
 
+        socket.on('left_panel_view', (data) => {
+            setLeftPanelView(data || null);
+        });
+
         // Track printer count for toolbar display
         socket.on('printer_list', (list) => {
             console.log('[PRINTERS] Count:', list.length);
@@ -704,6 +710,7 @@ function App() {
             socket.off('print_status_update');
             socket.off('quota_status');
             socket.off('error');
+            socket.off('left_panel_view');
 
             stopMicVisualizer();
             stopVideo();
@@ -1520,6 +1527,25 @@ function App() {
 
             {/* Main Content */}
             <div className="flex-1 relative z-10 flex flex-col items-center justify-center">
+                {/* Left Companion Box (same size/style as central ADA box) */}
+                <div
+                    id="visualizer-left"
+                    className="absolute flex items-center justify-center transition-all duration-200
+                        backdrop-blur-xl bg-black/30 border border-white/10 shadow-2xl overflow-hidden rounded-2xl pointer-events-auto"
+                    style={{
+                        left: elementPositions.visualizer.x - elementSizes.visualizer.w - 40,
+                        top: elementPositions.visualizer.y,
+                        transform: 'translate(-50%, -50%)',
+                        width: elementSizes.visualizer.w,
+                        height: elementSizes.visualizer.h
+                    }}
+                >
+                    <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10"></div>
+                    <div className="relative z-20 w-full h-full">
+                        <LeftToolView payload={leftPanelView} />
+                    </div>
+                </div>
+
                 {/* Central Visualizer (AI Audio) */}
                 <div
                     id="visualizer"
