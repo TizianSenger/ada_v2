@@ -62,13 +62,31 @@ DEFAULT_SETTINGS = {
     "face_auth_enabled": False, # Default OFF as requested
     "tool_permissions": {
         "generate_cad": True,
+        "iterate_cad": True,
         "run_web_agent": True,
         "write_file": True,
         "read_directory": True,
         "read_file": True,
         "create_project": True,
         "switch_project": True,
-        "list_projects": True
+        "list_projects": True,
+        "list_smart_devices": True,
+        "control_light": True,
+        "discover_printers": True,
+        "print_stl": True,
+        "get_print_status": True,
+        "connect_google_workspace": True,
+        "get_current_datetime": True,
+        "list_calendar_events": True,
+        "create_calendar_event": True,
+        "update_calendar_event": True,
+        "delete_calendar_event": True,
+        "list_calendar_invitations": True,
+        "respond_calendar_invitation": True,
+        "list_gmail_messages": True,
+        "list_gmail_labels": True,
+        "update_gmail_labels": True,
+        "send_gmail_message": True,
     },
     "printers": [], # List of {host, port, name, type}
     "kasa_devices": [], # List of {ip, alias, model}

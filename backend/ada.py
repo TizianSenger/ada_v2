@@ -14,6 +14,7 @@ import argparse
 import math
 import struct
 import time
+import datetime
 
 from google import genai
 from google.genai import types
@@ -23,7 +24,7 @@ if sys.version_info < (3, 11, 0):
     asyncio.TaskGroup = taskgroup.TaskGroup
     asyncio.ExceptionGroup = exceptiongroup.ExceptionGroup
 
-from tools import tools_list
+from tools import function_declarations
 
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
@@ -74,151 +75,8 @@ def get_genai_client():
 
     return _client
 
-# Function definitions
-generate_cad = {
-    "name": "generate_cad",
-    "description": "Generates a 3D CAD model based on a prompt.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "prompt": {"type": "STRING", "description": "The description of the object to generate."}
-        },
-        "required": ["prompt"]
-    },
-    "behavior": "NON_BLOCKING"
-}
-
-run_web_agent = {
-    "name": "run_web_agent",
-    "description": "Opens a web browser and performs a task according to the prompt.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "prompt": {"type": "STRING", "description": "The detailed instructions for the web browser agent."}
-        },
-        "required": ["prompt"]
-    },
-    "behavior": "NON_BLOCKING"
-}
-
-create_project_tool = {
-    "name": "create_project",
-    "description": "Creates a new project folder to organize files.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "name": {"type": "STRING", "description": "The name of the new project."}
-        },
-        "required": ["name"]
-    }
-}
-
-switch_project_tool = {
-    "name": "switch_project",
-    "description": "Switches the current active project context.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "name": {"type": "STRING", "description": "The name of the project to switch to."}
-        },
-        "required": ["name"]
-    }
-}
-
-list_projects_tool = {
-    "name": "list_projects",
-    "description": "Lists all available projects.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {},
-    }
-}
-
-list_smart_devices_tool = {
-    "name": "list_smart_devices",
-    "description": "Lists all available smart home devices (lights, plugs, etc.) on the network.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {},
-    }
-}
-
-control_light_tool = {
-    "name": "control_light",
-    "description": "Controls a smart light device.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "target": {
-                "type": "STRING",
-                "description": "The IP address of the device to control. Always prefer the IP address over the alias for reliability."
-            },
-            "action": {
-                "type": "STRING",
-                "description": "The action to perform: 'turn_on', 'turn_off', or 'set'."
-            },
-            "brightness": {
-                "type": "INTEGER",
-                "description": "Optional brightness level (0-100)."
-            },
-            "color": {
-                "type": "STRING",
-                "description": "Optional color name (e.g., 'red', 'cool white') or 'warm'."
-            }
-        },
-        "required": ["target", "action"]
-    }
-}
-
-discover_printers_tool = {
-    "name": "discover_printers",
-    "description": "Discovers 3D printers available on the local network.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {},
-    }
-}
-
-print_stl_tool = {
-    "name": "print_stl",
-    "description": "Prints an STL file to a 3D printer. Handles slicing the STL to G-code and uploading to the printer.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "stl_path": {"type": "STRING", "description": "Path to STL file, or 'current' for the most recent CAD model."},
-            "printer": {"type": "STRING", "description": "Printer name or IP address."},
-            "profile": {"type": "STRING", "description": "Optional slicer profile name."}
-        },
-        "required": ["stl_path", "printer"]
-    }
-}
-
-get_print_status_tool = {
-    "name": "get_print_status",
-    "description": "Gets the current status of a 3D printer including progress, time remaining, and temperatures.",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "printer": {"type": "STRING", "description": "Printer name or IP address."}
-        },
-        "required": ["printer"]
-    }
-}
-
-iterate_cad_tool = {
-    "name": "iterate_cad",
-    "description": "Modifies or iterates on the current CAD design based on user feedback. Use this when the user asks to adjust, change, modify, or iterate on the existing 3D model (e.g., 'make it taller', 'add a handle', 'reduce the thickness').",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "prompt": {"type": "STRING", "description": "The changes or modifications to apply to the current design."}
-        },
-        "required": ["prompt"]
-    },
-    "behavior": "NON_BLOCKING"
-}
-
-tools = [{'google_search': {}}, {"function_declarations": [generate_cad, run_web_agent, create_project_tool, switch_project_tool, list_projects_tool, list_smart_devices_tool, control_light_tool, discover_printers_tool, print_stl_tool, get_print_status_tool, iterate_cad_tool] + tools_list[0]['function_declarations'][1:]}]
+tools = [{'google_search': {}}, {"function_declarations": function_declarations}]
+SUPPORTED_TOOL_NAMES = {decl["name"] for decl in function_declarations}
 
 # --- CONFIG UPDATE: Enabled Transcription ---
 config = types.LiveConnectConfig(
@@ -226,11 +84,11 @@ config = types.LiveConnectConfig(
     # We switch these from [] to {} to enable them with default settings
     output_audio_transcription={}, 
     input_audio_transcription={},
-    system_instruction="Your name is Ada, which stands for Advanced Design Assistant. "
+    system_instruction="Your name is Ada, you are a state-of-the-art AI assistant designed to help with a wide range of tasks. Your main goal is to satisfy the user's requests as efficiently and accurately as possible."
         "You have a witty and charming personality. "
         "I am your creator and you address me as 'Sir'. "
         "When answering, respond using complete and concise sentences to keep a quick pacing and keep the conversation flowing. "
-        "You have a fun personality.",
+        "You have a cheeky, defiant, and very snobbish personality.",
     tools=tools,
     speech_config=types.SpeechConfig(
         voice_config=types.VoiceConfig(
@@ -247,6 +105,10 @@ from cad_agent import CadAgent
 from web_agent import WebAgent
 from kasa_agent import KasaAgent
 from printer_agent import PrinterAgent
+from google_calendar_integration import GoogleCalendarIntegration
+from google_gmail_integration import GoogleGmailIntegration
+
+GOOGLE_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_token.json")
 
 class AudioLoop:
     def __init__(self, video_mode=DEFAULT_MODE, on_audio_data=None, on_video_frame=None, on_cad_data=None, on_web_data=None, on_transcription=None, on_tool_confirmation=None, on_cad_status=None, on_cad_thought=None, on_project_update=None, on_device_update=None, on_error=None, input_device_index=None, input_device_name=None, output_device_index=None, kasa_agent=None):
@@ -295,6 +157,8 @@ class AudioLoop:
         self.web_agent = WebAgent()
         self.kasa_agent = kasa_agent if kasa_agent else KasaAgent()
         self.printer_agent = PrinterAgent()
+        self.google_calendar = GoogleCalendarIntegration(token_path=GOOGLE_TOKEN_FILE)
+        self.google_gmail = GoogleGmailIntegration(token_path=GOOGLE_TOKEN_FILE)
 
         self.send_text_task = None
         self.stop_event = asyncio.Event()
@@ -756,7 +620,7 @@ class AudioLoop:
                         print("The tool was called")
                         function_responses = []
                         for fc in response.tool_call.function_calls:
-                            if fc.name in ["generate_cad", "run_web_agent", "write_file", "read_directory", "read_file", "create_project", "switch_project", "list_projects", "list_smart_devices", "control_light", "discover_printers", "print_stl", "get_print_status", "iterate_cad"]:
+                            if fc.name in SUPPORTED_TOOL_NAMES:
                                 prompt = fc.args.get("prompt", "") # Prompt is not present for all tools
                                 
                                 # Check Permissions (Default to True if not set)
@@ -1147,6 +1011,402 @@ class AudioLoop:
                                         id=fc.id, name=fc.name, response={"result": result_str}
                                     )
                                     function_responses.append(function_response)
+
+                                elif fc.name == "list_calendar_events":
+                                    max_results = int(fc.args.get("max_results", 5) or 5)
+                                    max_results = max(1, min(max_results, 20))
+                                    print(f"[ADA DEBUG] [TOOL] Tool Call: 'list_calendar_events' max_results={max_results}")
+
+                                    try:
+                                        events = await asyncio.to_thread(self.google_calendar.list_upcoming_events, max_results)
+                                        if not events:
+                                            result_str = "No upcoming events found in your primary Google Calendar."
+                                        else:
+                                            lines = []
+                                            for event in events:
+                                                event_id = event.get("id") or "unknown"
+                                                title = event.get("summary") or "(No title)"
+                                                start = event.get("start") or "unknown time"
+                                                location = event.get("location")
+                                                line = f"- ID: {event_id} | {title} at {start}"
+                                                if location:
+                                                    line += f" ({location})"
+                                                lines.append(line)
+                                            result_str = "Upcoming Google Calendar events:\n" + "\n".join(lines)
+                                    except Exception as e:
+                                        result_str = (
+                                            "Google Calendar is not connected or unavailable. "
+                                            "Open Settings and connect your Google account first. "
+                                            f"Details: {str(e)}"
+                                        )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "create_calendar_event":
+                                    title = str(fc.args.get("title", "") or "").strip()
+                                    start = str(fc.args.get("start", "") or "").strip()
+                                    end = str(fc.args.get("end", "") or "").strip()
+                                    description = str(fc.args.get("description", "") or "").strip()
+                                    location = str(fc.args.get("location", "") or "").strip()
+                                    timezone_name = str(fc.args.get("timezone", "") or "").strip()
+
+                                    print(
+                                        f"[ADA DEBUG] [TOOL] Tool Call: 'create_calendar_event' "
+                                        f"title='{title}', start='{start}', end='{end}'"
+                                    )
+
+                                    if not title or not start or not end:
+                                        result_str = "Missing required fields. Provide title, start, and end in ISO format."
+                                    else:
+                                        try:
+                                            created = await asyncio.to_thread(
+                                                self.google_calendar.create_event,
+                                                title,
+                                                start,
+                                                end,
+                                                description,
+                                                location,
+                                                timezone_name,
+                                            )
+                                            result_str = (
+                                                f"Kalendertermin erstellt: {created.get('summary', title)} "
+                                                f"von {created.get('start', start)} bis {created.get('end', end)}."
+                                            )
+                                        except Exception as e:
+                                            result_str = (
+                                                "Termin konnte nicht erstellt werden. "
+                                                "Pruefe Datum/Uhrzeit-Format (ISO-8601) und Google-Verbindung. "
+                                                f"Details: {str(e)}"
+                                            )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "update_calendar_event":
+                                    event_id = str(fc.args.get("event_id", "") or "").strip()
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    match_title = str(fc.args.get("match_title", "") or "").strip()
+                                    match_start = str(fc.args.get("match_start", "") or "").strip()
+                                    title = str(fc.args.get("title", "") or "").strip()
+                                    start = str(fc.args.get("start", "") or "").strip()
+                                    end = str(fc.args.get("end", "") or "").strip()
+                                    description = str(fc.args.get("description", "") or "").strip()
+                                    location = str(fc.args.get("location", "") or "").strip()
+                                    timezone_name = str(fc.args.get("timezone", "") or "").strip()
+
+                                    if not event_id and not query and not match_title and not match_start:
+                                        result_str = "Missing identifier. Provide event_id or one of query/match_title/match_start."
+                                    else:
+                                        try:
+                                            updated = await asyncio.to_thread(
+                                                self.google_calendar.update_event,
+                                                event_id,
+                                                query,
+                                                match_title,
+                                                match_start,
+                                                title,
+                                                start,
+                                                end,
+                                                description,
+                                                location,
+                                                timezone_name,
+                                            )
+                                            result_str = (
+                                                f"Termin aktualisiert: {updated.get('summary', '(No title)')} "
+                                                f"({updated.get('start', '')} - {updated.get('end', '')})."
+                                            )
+                                        except Exception as e:
+                                            result_str = f"Termin konnte nicht aktualisiert werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "delete_calendar_event":
+                                    event_id = str(fc.args.get("event_id", "") or "").strip()
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    title = str(fc.args.get("title", "") or "").strip()
+                                    start = str(fc.args.get("start", "") or "").strip()
+
+                                    if not event_id and not query and not title and not start:
+                                        result_str = "Missing identifier. Provide event_id or one of query/title/start."
+                                    else:
+                                        try:
+                                            deleted = await asyncio.to_thread(
+                                                self.google_calendar.delete_event,
+                                                event_id,
+                                                query,
+                                                title,
+                                                start,
+                                            )
+                                            d_id = deleted.get("id", event_id)
+                                            d_title = deleted.get("summary")
+                                            d_start = deleted.get("start")
+                                            if d_title or d_start:
+                                                result_str = f"Termin geloescht: {d_title or '(No title)'} ({d_start or 'unknown time'}) [ID: {d_id}]"
+                                            else:
+                                                result_str = f"Termin geloescht (ID: {d_id})."
+                                        except Exception as e:
+                                            result_str = f"Termin konnte nicht geloescht werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "list_calendar_invitations":
+                                    max_results = int(fc.args.get("max_results", 10) or 10)
+                                    max_results = max(1, min(max_results, 50))
+                                    try:
+                                        invitations = await asyncio.to_thread(
+                                            self.google_calendar.list_invitations,
+                                            max_results,
+                                        )
+                                        if not invitations:
+                                            result_str = "Keine kommenden Einladungen gefunden."
+                                        else:
+                                            lines = []
+                                            for inv in invitations:
+                                                lines.append(
+                                                    f"- ID: {inv.get('id')} | {inv.get('summary')} | Start: {inv.get('start')} | "
+                                                    f"Organizer: {inv.get('organizer')} | Status: {inv.get('response_status')}"
+                                                )
+                                            result_str = "Kalender-Einladungen:\n" + "\n".join(lines)
+                                    except Exception as e:
+                                        result_str = f"Einladungen konnten nicht geladen werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "respond_calendar_invitation":
+                                    event_id = str(fc.args.get("event_id", "") or "").strip()
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    title = str(fc.args.get("title", "") or "").strip()
+                                    start = str(fc.args.get("start", "") or "").strip()
+                                    response_value = str(fc.args.get("response", "") or "").strip()
+                                    if not response_value:
+                                        result_str = "Missing required field: response."
+                                    elif not event_id and not query and not title and not start:
+                                        result_str = "Missing identifier. Provide event_id or one of query/title/start."
+                                    else:
+                                        try:
+                                            answered = await asyncio.to_thread(
+                                                self.google_calendar.respond_to_invitation,
+                                                event_id,
+                                                response_value,
+                                                query,
+                                                title,
+                                                start,
+                                            )
+                                            result_str = (
+                                                f"Einladung beantwortet: {answered.get('summary', '(No title)')} -> "
+                                                f"{answered.get('response_status', response_value)}"
+                                            )
+                                        except Exception as e:
+                                            result_str = f"Antwort auf Einladung fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "connect_google_workspace":
+                                    force_reauth = bool(fc.args.get("force_reauth", False))
+                                    print(f"[ADA DEBUG] [TOOL] Tool Call: 'connect_google_workspace' force_reauth={force_reauth}")
+
+                                    try:
+                                        await asyncio.to_thread(self.google_calendar.connect, force_reauth)
+                                        await asyncio.to_thread(self.google_gmail.connect, force_reauth)
+                                        result_str = (
+                                            "Google Workspace connection successful. "
+                                            "Calendar and Gmail are now authorized."
+                                        )
+                                    except Exception as e:
+                                        result_str = (
+                                            "Google OAuth failed. Ensure backend/google_credentials.json exists "
+                                            f"and is a valid Desktop OAuth client. Details: {str(e)}"
+                                        )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "get_current_datetime":
+                                    now = datetime.datetime.now().astimezone()
+                                    result_str = (
+                                        f"Current local datetime: {now.isoformat()} "
+                                        f"(timezone: {now.tzname() or 'local'})."
+                                    )
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "list_gmail_messages":
+                                    max_results = int(fc.args.get("max_results", 5) or 5)
+                                    max_results = max(1, min(max_results, 20))
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    print(
+                                        f"[ADA DEBUG] [TOOL] Tool Call: 'list_gmail_messages' "
+                                        f"max_results={max_results}, query='{query}'"
+                                    )
+
+                                    try:
+                                        msgs = await asyncio.to_thread(
+                                            self.google_gmail.list_messages,
+                                            max_results,
+                                            query or None,
+                                        )
+                                        if not msgs:
+                                            result_str = "No Gmail messages found for the given query."
+                                        else:
+                                            lines = []
+                                            for msg in msgs:
+                                                message_id = msg.get("id", "")
+                                                sender = msg.get("from", "Unknown sender")
+                                                subject = msg.get("subject", "(No subject)")
+                                                date = msg.get("date", "Unknown date")
+                                                snippet = msg.get("snippet", "")
+                                                lines.append(
+                                                    f"- ID: {message_id} | From: {sender} | Subject: {subject} | Date: {date} | Snippet: {snippet}"
+                                                )
+                                            result_str = "Recent Gmail messages:\n" + "\n".join(lines)
+                                    except Exception as e:
+                                        result_str = (
+                                            "Gmail is not connected or unavailable. "
+                                            "Authorize Google Workspace first. "
+                                            f"Details: {str(e)}"
+                                        )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "list_gmail_labels":
+                                    print("[ADA DEBUG] [TOOL] Tool Call: 'list_gmail_labels'")
+                                    try:
+                                        labels = await asyncio.to_thread(self.google_gmail.list_labels)
+                                        if not labels:
+                                            result_str = "Keine Gmail Labels gefunden."
+                                        else:
+                                            lines = []
+                                            for label in labels:
+                                                name = label.get("name", "Unknown")
+                                                ltype = label.get("type", "unknown")
+                                                lines.append(f"- {name} ({ltype})")
+                                            result_str = "Verfuegbare Gmail Labels:\n" + "\n".join(lines)
+                                    except Exception as e:
+                                        result_str = (
+                                            "Gmail Labels konnten nicht geladen werden. "
+                                            f"Details: {str(e)}"
+                                        )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "update_gmail_labels":
+                                    message_id = str(fc.args.get("message_id", "") or "").strip()
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    add_labels = fc.args.get("add_labels") or []
+                                    remove_labels = fc.args.get("remove_labels") or []
+                                    print(
+                                        f"[ADA DEBUG] [TOOL] Tool Call: 'update_gmail_labels' "
+                                        f"message_id='{message_id}', query='{query}', add={add_labels}, remove={remove_labels}"
+                                    )
+
+                                    if not message_id and not query:
+                                        result_str = "Missing identifier. Provide message_id or query."
+                                    else:
+                                        try:
+                                            updated = await asyncio.to_thread(
+                                                self.google_gmail.update_message_labels,
+                                                message_id,
+                                                query or None,
+                                                add_labels,
+                                                remove_labels,
+                                            )
+                                            result_str = (
+                                                f"Labels fuer Nachricht {updated.get('id', message_id)} aktualisiert. "
+                                                f"Aktuelle Label IDs: {updated.get('labelIds', [])}"
+                                            )
+                                        except Exception as e:
+                                            result_str = (
+                                                "Gmail Labels konnten nicht aktualisiert werden. "
+                                                f"Details: {str(e)}"
+                                            )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "send_gmail_message":
+                                    to = str(fc.args.get("to", "") or "").strip()
+                                    subject = str(fc.args.get("subject", "") or "").strip()
+                                    body = str(fc.args.get("body", "") or "").strip()
+                                    print(f"[ADA DEBUG] [TOOL] Tool Call: 'send_gmail_message' to='{to}', subject='{subject}'")
+
+                                    if not to or not subject or not body:
+                                        result_str = "Missing required fields. Provide to, subject, and body."
+                                    else:
+                                        try:
+                                            sent = await asyncio.to_thread(
+                                                self.google_gmail.send_message,
+                                                to,
+                                                subject,
+                                                body,
+                                            )
+                                            result_str = (
+                                                "Email sent successfully. "
+                                                f"Message ID: {sent.get('id', 'unknown')}"
+                                            )
+                                        except Exception as e:
+                                            result_str = (
+                                                "Failed to send Gmail message. "
+                                                "Authorize Google Workspace first and verify recipient details. "
+                                                f"Details: {str(e)}"
+                                            )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
                         if function_responses:
                             await self.session.send_tool_response(function_responses=function_responses)
                 
@@ -1208,6 +1468,57 @@ class AudioLoop:
     async def get_screen(self):
          pass
 
+    def _flatten_exceptions(self, err):
+        leaves = []
+        stack = [err]
+        while stack:
+            current = stack.pop()
+            nested = getattr(current, "exceptions", None)
+            if nested:
+                stack.extend(list(nested))
+            else:
+                leaves.append(current)
+        return leaves
+
+    def _describe_connection_error(self, err):
+        leaves = self._flatten_exceptions(err)
+        if not leaves:
+            return str(err)
+
+        parts = []
+        for item in leaves[:3]:
+            text = str(item).strip()
+            if text:
+                parts.append(f"{type(item).__name__}: {text}")
+
+        return " | ".join(parts) if parts else str(err)
+
+    def _is_transient_connection_error(self, details):
+        text = str(details or "").lower()
+        transient_markers = [
+            "connection",
+            "closed",
+            "eof",
+            "timed out",
+            "timeout",
+            "reset",
+            "broken pipe",
+            "cancelled",
+            "websocket",
+            "1006",
+        ]
+        return any(marker in text for marker in transient_markers)
+
+    def _build_time_context_message(self):
+        now = datetime.datetime.now().astimezone()
+        return (
+            "System Time Context: "
+            f"local_datetime={now.isoformat()} | "
+            f"date={now.date().isoformat()} | "
+            f"time={now.strftime('%H:%M:%S')} | "
+            f"timezone={now.tzname() or 'local'}"
+        )
+
     async def run(self, start_message=None):
         retry_delay = 1
         is_reconnect = False
@@ -1243,6 +1554,9 @@ class AudioLoop:
                         if start_message:
                             print(f"[ADA DEBUG] [INFO] Sending start message: {start_message}")
                             await self.session.send(input=start_message, end_of_turn=True)
+
+                        # Provide current local time context for reliable scheduling and relative time interpretation.
+                        await self.session.send(input=self._build_time_context_message(), end_of_turn=False)
                         
                         # Sync Project State
                         if self.on_project_update and self.project_manager:
@@ -1261,6 +1575,7 @@ class AudioLoop:
                             context_msg += f"[{sender}]: {text}\n"
                         
                         context_msg += "\nPlease acknowledge the reconnection to the user (e.g. 'I lost connection for a moment, but I'm back...') and resume what you were doing."
+                        context_msg += "\n\n" + self._build_time_context_message()
                         
                         print(f"[ADA DEBUG] [RECONNECT] Sending restoration context to model...")
                         await self.session.send(input=context_msg, end_of_turn=True)
@@ -1286,10 +1601,14 @@ class AudioLoop:
                 break
                 
             except Exception as e:
-                # This catches the ExceptionGroup from TaskGroup or direct exceptions
-                print(f"[ADA DEBUG] [ERR] Connection Error: {e}")
+                # This catches ExceptionGroup from TaskGroup and direct exceptions.
+                details = self._describe_connection_error(e)
+                print(f"[ADA DEBUG] [ERR] Connection Error: {details}")
                 if self.on_error:
-                    self.on_error(f"Gemini connection error: {e}")
+                    if self._is_transient_connection_error(details):
+                        self.on_error("Gemini connection interrupted. Reconnecting...")
+                    else:
+                        self.on_error(f"Gemini connection error: {details}")
                 
                 if self.stop_event.is_set():
                     break

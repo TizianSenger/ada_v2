@@ -4,7 +4,6 @@ import { X } from 'lucide-react';
 const TOOLS = [
     { id: 'generate_cad', label: 'Generate CAD' },
     { id: 'run_web_agent', label: 'Web Agent' },
-    { id: 'create_directory', label: 'Create Folder' },
     { id: 'write_file', label: 'Write File' },
     { id: 'read_directory', label: 'Read Directory' },
     { id: 'read_file', label: 'Read File' },
@@ -15,7 +14,20 @@ const TOOLS = [
     { id: 'control_light', label: 'Control Light' },
     { id: 'discover_printers', label: 'Discover Printers' },
     { id: 'print_stl', label: 'Print 3D Model' },
+    { id: 'get_print_status', label: 'Get Print Status' },
+    { id: 'get_current_datetime', label: 'Get Current DateTime' },
     { id: 'iterate_cad', label: 'Iterate CAD' },
+    { id: 'connect_google_workspace', label: 'Connect Google Workspace' },
+    { id: 'list_calendar_events', label: 'List Calendar Events' },
+    { id: 'create_calendar_event', label: 'Create Calendar Event' },
+    { id: 'update_calendar_event', label: 'Update Calendar Event' },
+    { id: 'delete_calendar_event', label: 'Delete Calendar Event' },
+    { id: 'list_calendar_invitations', label: 'List Calendar Invitations' },
+    { id: 'respond_calendar_invitation', label: 'Respond Calendar Invitation' },
+    { id: 'list_gmail_messages', label: 'List Gmail Messages' },
+    { id: 'list_gmail_labels', label: 'List Gmail Labels' },
+    { id: 'update_gmail_labels', label: 'Update Gmail Labels' },
+    { id: 'send_gmail_message', label: 'Send Gmail Message' },
 ];
 
 const SettingsWindow = ({

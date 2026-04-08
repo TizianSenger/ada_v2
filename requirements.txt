@@ -4,6 +4,10 @@ python-socketio
 python-multipart
 # Google GenAI SDK (v1beta)
 google-genai
+# Google Workspace APIs (Calendar + Gmail)
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
 # Computer Vision & Audio
 opencv-python
 pyaudio
