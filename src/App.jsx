@@ -70,10 +70,12 @@ function App() {
     const [quotaInfo, setQuotaInfo] = useState({
         level: 'unknown',
         title: 'Quota Status',
-        message: 'Noch keine Quota-Meldungen.',
+        message: 'No quota messages yet.',
         source: 'system',
         updatedAt: null
     });
+    const [quotaModels, setQuotaModels] = useState({});
+    const [isQuotaChecking, setIsQuotaChecking] = useState(false);
 
 
     // RESTORED STATE
@@ -322,6 +324,19 @@ function App() {
         }
     };
 
+    const requestQuotaCheck = () => {
+        if (!socketConnected) return;
+        setIsQuotaChecking(true);
+        setQuotaInfo(prev => ({
+            ...prev,
+            title: 'Quota Check Running',
+            message: 'Checking Voice, Web Agent, and CAD models...',
+            source: 'quota_check',
+            updatedAt: new Date().toLocaleTimeString()
+        }));
+        socket.emit('check_quotas');
+    };
+
     // Auto-Connect Model on Start (Only after Auth and devices loaded)
     useEffect(() => {
         // Only auto-connect once: when socket connected, authenticated, and devices loaded
@@ -404,9 +419,28 @@ function App() {
             }
         });
         socket.on('error', (data) => {
+            if (data?.msg === 'Model session ready') {
+                return;
+            }
             console.error("Socket Error:", data);
             addMessage('System', `Error: ${data.msg}`);
             updateQuotaInfoFromMessage(data?.msg, 'error');
+        });
+        socket.on('quota_status', (data) => {
+            const models = data?.models || {};
+            setQuotaModels(models);
+            setIsQuotaChecking(false);
+
+            const hasError = Object.values(models).some((m) => m && m.available === false);
+            setQuotaInfo({
+                level: hasError ? 'error' : 'ok',
+                title: hasError ? 'Model Availability: Partial' : 'Model Availability: OK',
+                message: hasError
+                    ? 'At least one model is currently blocked (quota/billing/access).'
+                    : 'All checked models are currently responding.',
+                source: 'quota_status',
+                updatedAt: new Date().toLocaleTimeString()
+            });
         });
         socket.on('cad_data', (data) => {
             console.log("Received CAD Data:", data);
@@ -668,6 +702,7 @@ function App() {
             socket.off('printer_list');
             socket.off('slicing_progress');
             socket.off('print_status_update');
+            socket.off('quota_status');
             socket.off('error');
 
             stopMicVisualizer();
@@ -1730,6 +1765,44 @@ function App() {
                                         Source: {quotaInfo.source} {quotaInfo.updatedAt ? `- ${quotaInfo.updatedAt}` : ''}
                                     </div>
                                 </div>
+                            </div>
+
+                            <div className="mt-4 grid grid-cols-1 gap-2">
+                                {Object.entries(quotaModels).map(([key, item]) => (
+                                    <div key={key} className="border border-cyan-900/50 rounded-lg p-2 bg-black/30">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="text-xs font-semibold text-cyan-300">{key}</div>
+                                            <div className={`text-[11px] px-2 py-0.5 rounded ${item?.available ? 'text-green-300 bg-green-500/10 border border-green-500/30' : 'text-red-300 bg-red-500/10 border border-red-500/30'}`}>
+                                                {item?.available ? 'available' : 'blocked'}
+                                            </div>
+                                        </div>
+                                        <div className="text-[11px] text-gray-300 mt-1 break-words">{item?.model}</div>
+                                        <div className="text-[11px] text-gray-400 mt-1 break-words">{item?.message}</div>
+                                        <div className="text-[11px] text-cyan-700 mt-1">Remaining: {item?.remaining || 'unknown'}</div>
+                                        {item?.hints?.summary && (
+                                            <div className="text-[11px] text-orange-300/90 mt-1">{item.hints.summary}</div>
+                                        )}
+                                        {item?.hints?.limits?.length > 0 && (
+                                            <div className="text-[11px] text-yellow-300/90 mt-1">Limits: {item.hints.limits.join(', ')}</div>
+                                        )}
+                                        {item?.hints?.retry_after && (
+                                            <div className="text-[11px] text-yellow-300/90 mt-1">Retry after: {item.hints.retry_after}</div>
+                                        )}
+                                    </div>
+                                ))}
+                                {Object.keys(quotaModels).length === 0 && (
+                                    <div className="text-xs text-gray-400">No model data yet. Click Refresh.</div>
+                                )}
+                            </div>
+
+                            <div className="mt-3 flex justify-end">
+                                <button
+                                    onClick={requestQuotaCheck}
+                                    className="px-3 py-1.5 text-xs rounded-md border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 transition-colors"
+                                    disabled={isQuotaChecking}
+                                >
+                                    {isQuotaChecking ? 'Checking...' : 'Refresh'}
+                                </button>
                             </div>
                         </div>
                     </div>

@@ -251,8 +251,8 @@ class WebAgent:
                     err_text = str(e)
                     if "RESOURCE_EXHAUSTED" in err_text or "429" in err_text:
                         quota_msg = (
-                            "Gemini quota erreicht (429 RESOURCE_EXHAUSTED). "
-                            "Der Web-Agent (computer-use-preview) braucht verfuegbare API-Quota/Billing."
+                            "Gemini quota reached (429 RESOURCE_EXHAUSTED). "
+                            "The Web Agent (computer-use-preview) requires available API quota/billing."
                         )
                         if update_callback:
                             await update_callback(None, quota_msg)
@@ -260,7 +260,7 @@ class WebAgent:
                     else:
                         if update_callback:
                             await update_callback(None, f"Error: {e}")
-                        final_response = f"Web Agent Fehler: {e}"
+                        final_response = f"Web Agent error: {e}"
                     break
                 
                 # Check for empty response

@@ -27,6 +27,7 @@ function createWindow() {
 
     // In dev, load Vite server. In prod, load index.html
     const isDev = process.env.NODE_ENV !== 'production';
+    const openDevTools = process.env.ADA_OPEN_DEVTOOLS === '1';
 
     const loadFrontend = (retries = 3) => {
         const url = isDev ? 'http://localhost:5173' : null;
@@ -39,7 +40,7 @@ function createWindow() {
                 console.log('Frontend loaded successfully!');
                 windowWasShown = true;
                 mainWindow.show();
-                if (isDev) {
+                if (isDev && openDevTools) {
                     mainWindow.webContents.openDevTools();
                 }
             })

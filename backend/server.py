@@ -14,6 +14,7 @@ import threading
 import sys
 import os
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -75,6 +76,103 @@ DEFAULT_SETTINGS = {
 }
 
 SETTINGS = DEFAULT_SETTINGS.copy()
+
+
+def _extract_quota_hints(error_text):
+    hints = {
+        "limits": [],
+        "retry_after": None,
+        "summary": None,
+    }
+
+    if not error_text:
+        return hints
+
+    limits = re.findall(r"limit:\s*([^,\n]+)", error_text, flags=re.IGNORECASE)
+    if limits:
+        unique_limits = []
+        for raw in limits:
+            value = raw.strip()
+            if value not in unique_limits:
+                unique_limits.append(value)
+        hints["limits"] = unique_limits
+
+    if "RESOURCE_EXHAUSTED" in str(error_text) or "429" in str(error_text):
+        if any(l == "0" for l in hints["limits"]):
+            hints["summary"] = "Free-tier limit currently 0 (blocked for this model)."
+        else:
+            hints["summary"] = "Quota exceeded for this model."
+
+    retry_match = re.search(r"retry in\s*([0-9.]+)s", error_text, flags=re.IGNORECASE)
+    if retry_match:
+        hints["retry_after"] = f"{retry_match.group(1)}s"
+    else:
+        retry_match = re.search(r"'retryDelay':\s*'([^']+)'", error_text, flags=re.IGNORECASE)
+        if retry_match:
+            hints["retry_after"] = retry_match.group(1)
+
+    return hints
+
+
+def _compact_error_message(error_text):
+    text = str(error_text or "").strip()
+    if not text:
+        return "Unknown error"
+
+    if "RESOURCE_EXHAUSTED" in text or "429" in text:
+        model_match = re.search(r"model:\s*([a-zA-Z0-9._\-]+)", text)
+        model_name = model_match.group(1) if model_match else "unknown"
+        return f"429 RESOURCE_EXHAUSTED for model {model_name}."
+
+    first_line = text.splitlines()[0].strip()
+    if len(first_line) > 180:
+        return first_line[:177] + "..."
+    return first_line
+
+
+async def _probe_text_model(model_id):
+    try:
+        await ada.client.aio.models.generate_content(
+            model=model_id,
+            contents="quota probe",
+            config=ada.types.GenerateContentConfig(max_output_tokens=1),
+        )
+        return {
+            "model": model_id,
+            "available": True,
+            "remaining": "unknown (dashboard only)",
+            "message": "Model responded.",
+        }
+    except Exception as e:
+        text = str(e)
+        return {
+            "model": model_id,
+            "available": False,
+            "remaining": "0 or unknown",
+            "message": _compact_error_message(text),
+            "hints": _extract_quota_hints(text),
+        }
+
+
+async def _probe_live_model(model_id):
+    try:
+        async with ada.client.aio.live.connect(model=model_id, config=ada.config):
+            pass
+        return {
+            "model": model_id,
+            "available": True,
+            "remaining": "unknown (dashboard only)",
+            "message": "Live model session established.",
+        }
+    except Exception as e:
+        text = str(e)
+        return {
+            "model": model_id,
+            "available": False,
+            "remaining": "0 or unknown",
+            "message": _compact_error_message(text),
+            "hints": _extract_quota_hints(text),
+        }
 
 def load_settings():
     global SETTINGS
@@ -977,6 +1075,34 @@ async def update_tool_permissions(sid, data):
         audio_loop.update_permissions(SETTINGS["tool_permissions"])
     # Broadcast update to all
     await sio.emit('tool_permissions', SETTINGS["tool_permissions"])
+
+
+@sio.event
+async def check_quotas(sid):
+    """Probe model availability for Quota view in frontend."""
+    try:
+        from web_agent import MODEL_ID as WEB_MODEL_ID
+    except Exception:
+        WEB_MODEL_ID = "gemini-2.5-computer-use-preview-10-2025"
+
+    cad_model_id = "gemini-3-pro-preview"
+
+    voice_status, web_status, cad_status = await asyncio.gather(
+        _probe_live_model(ada.MODEL),
+        _probe_text_model(WEB_MODEL_ID),
+        _probe_text_model(cad_model_id),
+    )
+
+    payload = {
+        "checked_at": datetime.now().isoformat(),
+        "models": {
+            "voice": voice_status,
+            "web_agent": web_status,
+            "cad": cad_status,
+        },
+    }
+
+    await sio.emit('quota_status', payload, room=sid)
 
 if __name__ == "__main__":
     uvicorn.run(

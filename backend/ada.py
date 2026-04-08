@@ -1183,8 +1183,6 @@ class AudioLoop:
                 ):
                     self.session = session
                     print("[ADA DEBUG] [CONNECT] Gemini session established.")
-                    if self.on_error:
-                        self.on_error("Model session ready")
 
                     self.audio_in_queue = asyncio.Queue()
                     self.out_queue = asyncio.Queue(maxsize=10)
