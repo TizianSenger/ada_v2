@@ -19,6 +19,7 @@ SCREEN_WIDTH = 1440
 SCREEN_HEIGHT = 900
 # UPDATED: Use the specific Computer Use preview model
 MODEL_ID = "gemini-2.5-computer-use-preview-10-2025"
+START_URL = "https://duckduckgo.com"
 
 class WebAgent:
     def __init__(self):
@@ -66,7 +67,8 @@ class WebAgent:
                 elif fn_name == "go_forward":
                     await self.page.go_forward()
                 elif fn_name == "search":
-                    await self.page.goto("https://www.google.com")
+                    # Avoid Google consent interstitials that can stall automation.
+                    await self.page.goto(START_URL)
                 elif fn_name == "wait_5_seconds":
                     await asyncio.sleep(5)
 
@@ -202,8 +204,8 @@ class WebAgent:
             )
             self.page = await self.context.new_page()
             
-            # Start at Google
-            await self.page.goto("https://www.google.com")
+            # Start on a consent-light search page for more reliable automation.
+            await self.page.goto(START_URL)
 
             config = types.GenerateContentConfig(
                 tools=[types.Tool(
@@ -246,7 +248,19 @@ class WebAgent:
                     )
                 except Exception as e:
                     print(f"[CRITICAL] Critical API Error: {e}")
-                    if update_callback: await update_callback(None, f"Error: {e}")
+                    err_text = str(e)
+                    if "RESOURCE_EXHAUSTED" in err_text or "429" in err_text:
+                        quota_msg = (
+                            "Gemini quota erreicht (429 RESOURCE_EXHAUSTED). "
+                            "Der Web-Agent (computer-use-preview) braucht verfuegbare API-Quota/Billing."
+                        )
+                        if update_callback:
+                            await update_callback(None, quota_msg)
+                        final_response = quota_msg
+                    else:
+                        if update_callback:
+                            await update_callback(None, f"Error: {e}")
+                        final_response = f"Web Agent Fehler: {e}"
                     break
                 
                 # Check for empty response

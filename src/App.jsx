@@ -45,7 +45,7 @@ function App() {
 
 
     const [isConnected, setIsConnected] = useState(true); // Power state DEFAULT ON
-    const [isMuted, setIsMuted] = useState(true); // Mic state DEFAULT MUTED
+    const [isMuted, setIsMuted] = useState(false); // Mic state DEFAULT UNMUTED
     const [isVideoOn, setIsVideoOn] = useState(false); // Video state
     const [messages, setMessages] = useState([]);
     const [inputValue, setInputValue] = useState('');

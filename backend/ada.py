@@ -190,7 +190,7 @@ config = types.LiveConnectConfig(
     input_audio_transcription={},
     system_instruction="Your name is Ada, which stands for Advanced Design Assistant. "
         "You have a witty and charming personality. "
-        "Your creator is Naz, and you address him as 'Sir'. "
+        "I am your creator and you address me as 'Sir'. "
         "When answering, respond using complete and concise sentences to keep a quick pacing and keep the conversation flowing. "
         "You have a fun personality.",
     tools=tools,
@@ -1182,6 +1182,9 @@ class AudioLoop:
                     asyncio.TaskGroup() as tg,
                 ):
                     self.session = session
+                    print("[ADA DEBUG] [CONNECT] Gemini session established.")
+                    if self.on_error:
+                        self.on_error("Model session ready")
 
                     self.audio_in_queue = asyncio.Queue()
                     self.out_queue = asyncio.Queue(maxsize=10)
@@ -1248,6 +1251,8 @@ class AudioLoop:
             except Exception as e:
                 # This catches the ExceptionGroup from TaskGroup or direct exceptions
                 print(f"[ADA DEBUG] [ERR] Connection Error: {e}")
+                if self.on_error:
+                    self.on_error(f"Gemini connection error: {e}")
                 
                 if self.stop_event.is_set():
                     break
