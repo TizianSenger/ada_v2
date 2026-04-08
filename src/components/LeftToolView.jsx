@@ -1,5 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CloudSun, CalendarDays, Mail, Route } from 'lucide-react';
+import {
+    CloudSun,
+    CalendarDays,
+    Mail,
+    Route,
+    ArrowUp,
+    ArrowLeft,
+    ArrowRight,
+    CornerUpLeft,
+    CornerUpRight,
+    RotateCcw,
+} from 'lucide-react';
 import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -216,6 +227,42 @@ const RouteView = ({ payload }) => {
     const endPos = route?.destination?.lat && route?.destination?.lon ? [route.destination.lat, route.destination.lon] : null;
     const fallbackCenter = startPos || [48.7665, 11.4257];
 
+    const getStepDirection = (instruction) => {
+        const text = String(instruction || '').toLowerCase();
+
+        if (text.includes('uturn') || text.includes('u-turn')) {
+            return {
+                Icon: RotateCcw,
+                colorClass: 'text-pink-300 bg-pink-500/15 border-pink-400/40',
+                label: 'U-Turn',
+            };
+        }
+
+        if (text.includes('slight left') || text.includes('left')) {
+            const slight = text.includes('slight left');
+            return {
+                Icon: slight ? CornerUpLeft : ArrowLeft,
+                colorClass: 'text-blue-300 bg-blue-500/15 border-blue-400/40',
+                label: slight ? 'Leicht links' : 'Links',
+            };
+        }
+
+        if (text.includes('slight right') || text.includes('right')) {
+            const slight = text.includes('slight right');
+            return {
+                Icon: slight ? CornerUpRight : ArrowRight,
+                colorClass: 'text-orange-300 bg-orange-500/15 border-orange-400/40',
+                label: slight ? 'Leicht rechts' : 'Rechts',
+            };
+        }
+
+        return {
+            Icon: ArrowUp,
+            colorClass: 'text-emerald-300 bg-emerald-500/15 border-emerald-400/40',
+            label: 'Geradeaus',
+        };
+    };
+
     return (
         <div className="h-full w-full flex flex-col">
             <div className="px-3 py-2 border-b border-cyan-900/40 bg-black/30">
@@ -277,8 +324,24 @@ const RouteView = ({ payload }) => {
                 )}
                 {steps.map((step, idx) => (
                     <div key={`${idx}-${step.instruction || ''}`} className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
-                        <div className="text-cyan-100/90 text-xs">{idx + 1}. {step.instruction || 'Weiter'}</div>
-                        <div className="text-cyan-400/80 text-[11px] mt-1">{step.distance_km ?? 'n/a'} km</div>
+                        {(() => {
+                            const direction = getStepDirection(step.instruction);
+                            const DirectionIcon = direction.Icon;
+
+                            return (
+                                <div className="flex items-start gap-2">
+                                    <div className={`mt-0.5 shrink-0 w-6 h-6 rounded-md border flex items-center justify-center ${direction.colorClass}`}>
+                                        <DirectionIcon size={14} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className="text-cyan-100/90 text-xs">{idx + 1}. {step.instruction || 'Weiter'}</div>
+                                        <div className="text-[11px] mt-1 text-cyan-400/80">
+                                            {direction.label} | {step.distance_km ?? 'n/a'} km
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 ))}
             </div>

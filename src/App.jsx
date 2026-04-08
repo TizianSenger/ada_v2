@@ -1418,6 +1418,18 @@ function App() {
         setShowPrinterWindow(!showPrinterWindow);
     };
 
+    const detailViewTop = elementPositions.visualizer.y - (elementSizes.visualizer.h / 2);
+    const chatBottom = elementPositions.chat.y + elementSizes.chat.h;
+    const detailViewHeight = Math.max(320, chatBottom - detailViewTop);
+    const detailViewWidth = elementSizes.visualizer.w + 70;
+    const detailViewCenterY = detailViewTop + (detailViewHeight / 2);
+    const detailViewGap = 20;
+    const detailViewCenterX =
+        elementPositions.visualizer.x
+        - (elementSizes.visualizer.w / 2)
+        - detailViewGap
+        - (detailViewWidth / 2);
+
 
 
     return (
@@ -1533,11 +1545,11 @@ function App() {
                     className="absolute flex items-center justify-center transition-all duration-200
                         backdrop-blur-xl bg-black/30 border border-white/10 shadow-2xl overflow-hidden rounded-2xl pointer-events-auto"
                     style={{
-                        left: elementPositions.visualizer.x - elementSizes.visualizer.w - 40,
-                        top: elementPositions.visualizer.y,
+                        left: detailViewCenterX,
+                        top: detailViewCenterY,
                         transform: 'translate(-50%, -50%)',
-                        width: elementSizes.visualizer.w,
-                        height: elementSizes.visualizer.h
+                        width: detailViewWidth,
+                        height: detailViewHeight
                     }}
                 >
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10"></div>
