@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mic, MicOff, Settings, Power, Video, VideoOff, Hand, Lightbulb, Printer, Globe, Box } from 'lucide-react';
+import { Mic, MicOff, Settings, Power, Video, VideoOff, Hand, Lightbulb, Printer, Globe, Box, Gauge } from 'lucide-react';
 
 const ToolsModule = ({
     isConnected,
@@ -21,6 +21,9 @@ const ToolsModule = ({
     showCadWindow,
     onToggleBrowser,
     showBrowserWindow,
+    onToggleQuota,
+    showQuotaWindow,
+    quotaState,
     activeDragElement,
 
     position,
@@ -140,6 +143,20 @@ const ToolsModule = ({
                         } `}
                 >
                     <Globe size={24} />
+                </button>
+
+                {/* Quota Status */}
+                <button
+                    onClick={onToggleQuota}
+                    className={`p-3 rounded-full border-2 transition-all duration-300 ${showQuotaWindow
+                        ? 'border-cyan-300 bg-cyan-300/10 text-cyan-300 hover:bg-cyan-300/20'
+                        : quotaState === 'error'
+                            ? 'border-red-500 bg-red-500/10 text-red-400 hover:bg-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.3)]'
+                            : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
+                        } `}
+                    title="Quota Status"
+                >
+                    <Gauge size={24} />
                 </button>
             </div>
         </div>

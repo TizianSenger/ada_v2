@@ -7,7 +7,7 @@ import CadWindow from './components/CadWindow';
 import BrowserWindow from './components/BrowserWindow';
 import ChatModule from './components/ChatModule';
 import ToolsModule from './components/ToolsModule';
-import { Mic, MicOff, Settings, X, Minus, Power, Video, VideoOff, Layout, Hand, Printer, Clock } from 'lucide-react';
+import { Mic, MicOff, Settings, X, Minus, Power, Video, VideoOff, Layout, Hand, Printer, Clock, Gauge, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 // MemoryPrompt removed - memory is now actively saved to project
 import ConfirmationPopup from './components/ConfirmationPopup';
@@ -66,6 +66,14 @@ function App() {
     const [activePrintStatus, setActivePrintStatus] = useState(null); // {printer, progress_percent, time_elapsed, state}
     const [printerCount, setPrinterCount] = useState(0); // Count of connected printers
     const [currentTime, setCurrentTime] = useState(new Date()); // Live clock
+    const [showQuotaWindow, setShowQuotaWindow] = useState(false);
+    const [quotaInfo, setQuotaInfo] = useState({
+        level: 'unknown',
+        title: 'Quota Status',
+        message: 'Noch keine Quota-Meldungen.',
+        source: 'system',
+        updatedAt: null
+    });
 
 
     // RESTORED STATE
@@ -288,6 +296,32 @@ function App() {
     // Ref to track if model has been auto-connected (prevents duplicate connections)
     const hasAutoConnectedRef = useRef(false);
 
+    const updateQuotaInfoFromMessage = (msg, source = 'backend') => {
+        const text = String(msg || '');
+        const normalized = text.toLowerCase();
+
+        if (normalized.includes('resource_exhausted') || normalized.includes('quota') || normalized.includes('429')) {
+            setQuotaInfo({
+                level: 'error',
+                title: 'Quota Exceeded',
+                message: text,
+                source,
+                updatedAt: new Date().toLocaleTimeString()
+            });
+            return;
+        }
+
+        if (normalized.includes('model session ready') || normalized.includes('a.d.a started') || normalized.includes('model connected')) {
+            setQuotaInfo({
+                level: 'ok',
+                title: 'Model Ready',
+                message: text,
+                source,
+                updatedAt: new Date().toLocaleTimeString()
+            });
+        }
+    };
+
     // Auto-Connect Model on Start (Only after Auth and devices loaded)
     useEffect(() => {
         // Only auto-connect once: when socket connected, authenticated, and devices loaded
@@ -328,6 +362,7 @@ function App() {
         });
         socket.on('status', (data) => {
             addMessage('System', data.msg);
+            updateQuotaInfoFromMessage(data.msg, 'status');
             // Update status bar based on backend messages
             if (data.msg === 'A.D.A Started') {
                 setStatus('Model Connected');
@@ -371,6 +406,7 @@ function App() {
         socket.on('error', (data) => {
             console.error("Socket Error:", data);
             addMessage('System', `Error: ${data.msg}`);
+            updateQuotaInfoFromMessage(data?.msg, 'error');
         });
         socket.on('cad_data', (data) => {
             console.log("Received CAD Data:", data);
@@ -1644,11 +1680,60 @@ function App() {
                         showCadWindow={showCadWindow}
                         onToggleBrowser={() => setShowBrowserWindow(!showBrowserWindow)}
                         showBrowserWindow={showBrowserWindow}
+                        onToggleQuota={() => setShowQuotaWindow(!showQuotaWindow)}
+                        showQuotaWindow={showQuotaWindow}
+                        quotaState={quotaInfo.level}
                         activeDragElement={activeDragElement}
                         position={elementPositions.tools}
                         onMouseDown={(e) => handleMouseDown(e, 'tools')}
                     />
                 </div>
+
+                {showQuotaWindow && (
+                    <div
+                        className="absolute w-[520px] max-w-[90vw] backdrop-blur-xl bg-black/55 border border-cyan-500/25 rounded-xl shadow-2xl z-30 pointer-events-auto"
+                        style={{
+                            left: elementPositions.tools.x,
+                            top: elementPositions.tools.y - 110,
+                            transform: 'translate(-50%, -100%)'
+                        }}
+                    >
+                        <div className="absolute inset-0 bg-[url('/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay rounded-xl"></div>
+                        <div className="relative z-10 p-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-cyan-300 font-semibold tracking-wide">
+                                    <Gauge size={16} />
+                                    <span>Quota Status</span>
+                                </div>
+                                <button
+                                    onClick={() => setShowQuotaWindow(false)}
+                                    className="text-gray-400 hover:text-red-400 transition-colors"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+
+                            <div className="mt-3 flex items-start gap-2">
+                                {quotaInfo.level === 'error' ? (
+                                    <AlertTriangle size={16} className="text-red-400 mt-0.5" />
+                                ) : (
+                                    <CheckCircle2 size={16} className="text-green-400 mt-0.5" />
+                                )}
+                                <div className="min-w-0">
+                                    <div className={`text-sm font-semibold ${quotaInfo.level === 'error' ? 'text-red-300' : 'text-green-300'}`}>
+                                        {quotaInfo.title}
+                                    </div>
+                                    <div className="text-xs text-gray-300 mt-1 break-words">
+                                        {quotaInfo.message}
+                                    </div>
+                                    <div className="text-[11px] text-cyan-700 mt-2">
+                                        Source: {quotaInfo.source} {quotaInfo.updatedAt ? `- ${quotaInfo.updatedAt}` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Kasa Window */}
                 {showKasaWindow && (
