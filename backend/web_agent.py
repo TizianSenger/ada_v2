@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import asyncio
 import base64
@@ -9,10 +10,25 @@ from google.genai import types
 
 # 1. Load API Key
 load_dotenv()
-API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not API_KEY:
-    raise ValueError("Please set GEMINI_API_KEY in your .env file")
+
+def _resolve_api_key():
+    env_key = str(os.getenv("GEMINI_API_KEY", "") or "").strip()
+    if env_key:
+        return env_key
+
+    settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+            key = str(settings.get("gemini_api_key", "") or "").strip()
+            if key:
+                return key
+        except Exception:
+            pass
+
+    return None
 
 # 2. Configuration
 SCREEN_WIDTH = 1440
@@ -23,7 +39,11 @@ START_URL = "https://duckduckgo.com"
 
 class WebAgent:
     def __init__(self):
-        self.client = genai.Client(api_key=API_KEY)
+        api_key = _resolve_api_key()
+        if not api_key:
+            raise ValueError("Missing Gemini API key. Set it in Settings or .env as GEMINI_API_KEY.")
+
+        self.client = genai.Client(api_key=api_key)
         self.browser = None
         self.context = None
         self.page = None

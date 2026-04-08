@@ -56,7 +56,7 @@ audio_loop = None
 loop_task = None
 authenticator = None
 kasa_agent = KasaAgent()
-SETTINGS_FILE = "settings.json"
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
 DEFAULT_SETTINGS = {
     "face_auth_enabled": False, # Default OFF as requested
@@ -72,10 +72,18 @@ DEFAULT_SETTINGS = {
     },
     "printers": [], # List of {host, port, name, type}
     "kasa_devices": [], # List of {ip, alias, model}
-    "camera_flipped": False # Invert cursor horizontal direction
+    "camera_flipped": False, # Invert cursor horizontal direction
+    "gemini_api_key": ""
 }
 
 SETTINGS = DEFAULT_SETTINGS.copy()
+
+
+def _settings_for_client():
+    public_settings = dict(SETTINGS)
+    api_key = str(public_settings.pop("gemini_api_key", "") or "").strip()
+    public_settings["gemini_api_key_configured"] = bool(api_key)
+    return public_settings
 
 
 def _extract_quota_hints(error_text):
@@ -132,7 +140,8 @@ def _compact_error_message(error_text):
 
 async def _probe_text_model(model_id):
     try:
-        await ada.client.aio.models.generate_content(
+        client = ada.get_genai_client()
+        await client.aio.models.generate_content(
             model=model_id,
             contents="quota probe",
             config=ada.types.GenerateContentConfig(max_output_tokens=1),
@@ -156,7 +165,8 @@ async def _probe_text_model(model_id):
 
 async def _probe_live_model(model_id):
     try:
-        async with ada.client.aio.live.connect(model=model_id, config=ada.config):
+        client = ada.get_genai_client()
+        async with client.aio.live.connect(model=model_id, config=ada.config):
             pass
         return {
             "model": model_id,
@@ -187,7 +197,15 @@ def load_settings():
                          SETTINGS["tool_permissions"].update(v)
                     else:
                         SETTINGS[k] = v
-            print(f"Loaded settings: {SETTINGS}")
+
+            stored_key = str(SETTINGS.get("gemini_api_key", "") or "").strip()
+            if stored_key:
+                os.environ["GEMINI_API_KEY"] = stored_key
+
+            safe_settings = dict(SETTINGS)
+            if safe_settings.get("gemini_api_key"):
+                safe_settings["gemini_api_key"] = "***"
+            print(f"Loaded settings: {safe_settings}")
         except Exception as e:
             print(f"Error loading settings: {e}")
 
@@ -1029,7 +1047,7 @@ async def control_kasa(sid, data):
 
 @sio.event
 async def get_settings(sid):
-    await sio.emit('settings', SETTINGS)
+    await sio.emit('settings', _settings_for_client())
 
 @sio.event
 async def update_settings(sid, data):
@@ -1055,9 +1073,19 @@ async def update_settings(sid, data):
         SETTINGS["camera_flipped"] = data["camera_flipped"]
         print(f"[SERVER] Camera flip set to: {data['camera_flipped']}")
 
+    if "gemini_api_key" in data:
+        new_key = str(data.get("gemini_api_key", "") or "").strip()
+        if new_key:
+            SETTINGS["gemini_api_key"] = new_key
+            os.environ["GEMINI_API_KEY"] = new_key
+            print("[SERVER] Gemini API key updated from settings.")
+            await sio.emit('status', {'msg': 'Gemini API key saved.'}, room=sid)
+        else:
+            await sio.emit('error', {'msg': 'API key is empty. Please paste a valid key.'}, room=sid)
+
     save_settings()
     # Broadcast new full settings
-    await sio.emit('settings', SETTINGS)
+    await sio.emit('settings', _settings_for_client())
 
 
 # Deprecated/Mapped for compatibility if frontend still uses specific events

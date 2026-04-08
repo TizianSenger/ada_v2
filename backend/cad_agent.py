@@ -10,9 +10,32 @@ from typing import List, Optional
 
 load_dotenv()
 
+
+def _resolve_api_key():
+    env_key = str(os.getenv("GEMINI_API_KEY", "") or "").strip()
+    if env_key:
+        return env_key
+
+    settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+            key = str(settings.get("gemini_api_key", "") or "").strip()
+            if key:
+                return key
+        except Exception:
+            pass
+
+    return None
+
 class CadAgent:
     def __init__(self, on_thought=None, on_status=None):
-        self.client = genai.Client(http_options={"api_version": "v1beta"}, api_key=os.getenv("GEMINI_API_KEY"))
+        api_key = _resolve_api_key()
+        if not api_key:
+            raise ValueError("Missing Gemini API key. Set it in Settings or .env as GEMINI_API_KEY.")
+
+        self.client = genai.Client(http_options={"api_version": "v1beta"}, api_key=api_key)
         # Using Gemini 2.5 Pro for thinking/streaming support
         self.model = "gemini-3-pro-preview"
         self.on_thought = on_thought  # Callback for streaming thoughts 

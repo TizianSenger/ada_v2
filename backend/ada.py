@@ -4,6 +4,7 @@ import io
 import os
 import sys
 import traceback
+import json
 from dotenv import load_dotenv
 import cv2
 import pyaudio
@@ -34,7 +35,44 @@ MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_MODE = "camera"
 
 load_dotenv()
-client = genai.Client(http_options={"api_version": "v1beta"}, api_key=os.getenv("GEMINI_API_KEY"))
+
+_client = None
+_client_api_key = None
+
+
+def _get_api_key_from_settings():
+    settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+    if not os.path.exists(settings_path):
+        return None
+
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        key = str(data.get("gemini_api_key", "") or "").strip()
+        return key or None
+    except Exception:
+        return None
+
+
+def resolve_api_key():
+    env_key = str(os.getenv("GEMINI_API_KEY", "") or "").strip()
+    if env_key:
+        return env_key
+    return _get_api_key_from_settings()
+
+
+def get_genai_client():
+    global _client, _client_api_key
+
+    api_key = resolve_api_key()
+    if not api_key:
+        raise ValueError("Missing Gemini API key. Set it in Settings or .env as GEMINI_API_KEY.")
+
+    if _client is None or _client_api_key != api_key:
+        _client = genai.Client(http_options={"api_version": "v1beta"}, api_key=api_key)
+        _client_api_key = api_key
+
+    return _client
 
 # Function definitions
 generate_cad = {
@@ -1177,8 +1215,9 @@ class AudioLoop:
         while not self.stop_event.is_set():
             try:
                 print(f"[ADA DEBUG] [CONNECT] Connecting to Gemini Live API...")
+                live_client = get_genai_client()
                 async with (
-                    client.aio.live.connect(model=MODEL, config=config) as session,
+                    live_client.aio.live.connect(model=MODEL, config=config) as session,
                     asyncio.TaskGroup() as tg,
                 ):
                     self.session = session

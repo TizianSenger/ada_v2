@@ -38,6 +38,9 @@ const SettingsWindow = ({
 }) => {
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
+    const [apiKeyInput, setApiKeyInput] = useState('');
+    const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
+    const [apiKeyMessage, setApiKeyMessage] = useState('');
 
     useEffect(() => {
         // Request initial permissions
@@ -52,6 +55,7 @@ const SettingsWindow = ({
                     setFaceAuthEnabled(settings.face_auth_enabled);
                     localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
                 }
+                setApiKeyConfigured(Boolean(settings.gemini_api_key_configured));
             }
         };
 
@@ -88,6 +92,19 @@ const SettingsWindow = ({
         socket.emit('update_settings', { camera_flipped: newVal });
     };
 
+    const saveApiKey = () => {
+        const trimmed = apiKeyInput.trim();
+        if (!trimmed) {
+            setApiKeyMessage('Please enter a valid API key.');
+            return;
+        }
+
+        socket.emit('update_settings', { gemini_api_key: trimmed });
+        setApiKeyInput('');
+        setApiKeyConfigured(true);
+        setApiKeyMessage('API key saved. Start or restart ADA to use it.');
+    };
+
     return (
         <div className="absolute top-20 right-10 bg-black/90 border border-cyan-500/50 p-4 rounded-lg z-50 w-80 backdrop-blur-xl shadow-[0_0_30px_rgba(6,182,212,0.2)]">
             <div className="flex justify-between items-center mb-4 border-b border-cyan-900/50 pb-2">
@@ -111,6 +128,32 @@ const SettingsWindow = ({
                         />
                     </button>
                 </div>
+            </div>
+
+            {/* Gemini API Key */}
+            <div className="mb-6">
+                <h3 className="text-cyan-400 font-bold mb-2 text-xs uppercase tracking-wider opacity-80">Gemini API Key</h3>
+                <input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder={apiKeyConfigured ? 'Key saved (enter new key to replace)' : 'Paste Gemini API key'}
+                    className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                />
+                <div className="flex items-center justify-between mt-2">
+                    <span className="text-[10px] text-cyan-500/70">
+                        {apiKeyConfigured ? 'Stored key detected' : 'No key stored yet'}
+                    </span>
+                    <button
+                        onClick={saveApiKey}
+                        className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                    >
+                        Save Key
+                    </button>
+                </div>
+                {apiKeyMessage && (
+                    <p className="mt-1 text-[10px] text-cyan-300/80">{apiKeyMessage}</p>
+                )}
             </div>
 
             {/* Microphone Section */}
