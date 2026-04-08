@@ -350,6 +350,20 @@ _clear_detail_view_tool = {
     }
 }
 
+_system_check_tool = {
+    "name": "system_check",
+    "description": "Run a full ADA system health check across key integrations and return a diagnostic report.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "include_network_checks": {
+                "type": "BOOLEAN",
+                "description": "If true, include online checks like weather, route, Google, and discovery probes. Defaults to true."
+            }
+        }
+    }
+}
+
 _list_calendar_events_tool = {
     "name": "list_calendar_events",
     "description": "List upcoming events from the primary Google Calendar.",
@@ -656,6 +670,7 @@ function_declarations = [
     _get_weather_full_report_tool,
     _route_plan_tool,
     _clear_detail_view_tool,
+    _system_check_tool,
     _list_calendar_events_tool,
     _get_calendar_view_tool,
     _create_calendar_event_tool,

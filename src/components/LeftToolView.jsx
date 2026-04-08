@@ -4,6 +4,7 @@ import {
     CalendarDays,
     Mail,
     Route,
+    ShieldCheck,
     ArrowUp,
     ArrowLeft,
     ArrowRight,
@@ -63,6 +64,7 @@ const ModeHeader = ({ activeMode }) => {
         { id: 'calendar', label: 'Kalender', Icon: CalendarDays },
         { id: 'mail', label: 'Mail', Icon: Mail },
         { id: 'route', label: 'Route', Icon: Route },
+        { id: 'system', label: 'System', Icon: ShieldCheck },
     ];
 
     return (
@@ -349,6 +351,54 @@ const RouteView = ({ payload }) => {
     );
 };
 
+const SystemCheckView = ({ payload }) => {
+    const report = payload?.report || {};
+    const summary = report?.summary || {};
+    const checks = Array.isArray(report?.checks) ? report.checks : [];
+
+    const badgeClass = (status) => {
+        if (status === 'pass') return 'text-emerald-300 bg-emerald-500/15 border-emerald-400/40';
+        if (status === 'warn') return 'text-amber-300 bg-amber-500/15 border-amber-400/40';
+        return 'text-red-300 bg-red-500/15 border-red-400/40';
+    };
+
+    return (
+        <div className="h-full w-full flex flex-col">
+            <div className="px-3 py-2 border-b border-cyan-900/40 bg-black/30">
+                <div className="text-cyan-300 text-xs uppercase tracking-wider font-bold">{payload?.title || 'System Check Report'}</div>
+                <div className="text-cyan-100/75 text-xs mt-1">
+                    {summary?.timestamp ? `Zeit: ${formatTime(summary.timestamp)}` : 'Zeit: -'}
+                </div>
+            </div>
+
+            <div className="px-3 py-2 border-b border-cyan-900/30 bg-black/20 grid grid-cols-4 gap-2 text-[11px]">
+                <div className="border border-emerald-500/30 rounded p-2 text-emerald-200">OK: {summary?.passed ?? 0}</div>
+                <div className="border border-amber-500/30 rounded p-2 text-amber-200">Warn: {summary?.warned ?? 0}</div>
+                <div className="border border-red-500/30 rounded p-2 text-red-200">Fail: {summary?.failed ?? 0}</div>
+                <div className="border border-cyan-700/40 rounded p-2 text-cyan-200">{summary?.duration_ms ?? 0} ms</div>
+            </div>
+
+            <div className="flex-1 overflow-auto scrollbar-hide p-3 space-y-2">
+                {checks.length === 0 && (
+                    <div className="text-xs text-cyan-400/70">Keine Check-Daten vorhanden.</div>
+                )}
+                {checks.map((check, idx) => (
+                    <div key={`${check.name || 'check'}-${idx}`} className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="flex items-start justify-between gap-2">
+                            <div className="text-cyan-100/90 text-xs font-semibold">{check.name || 'Check'}</div>
+                            <div className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border ${badgeClass(check.status)}`}>
+                                {check.status || 'unknown'}
+                            </div>
+                        </div>
+                        <div className="text-[11px] text-cyan-300/85 mt-1 break-words">{check.message || '-'}</div>
+                        <div className="text-[10px] text-cyan-500/80 mt-1">Dauer: {check.duration_ms ?? 0} ms</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 const LeftToolView = ({ payload }) => {
     const [fadeKey, setFadeKey] = useState(0);
 
@@ -358,6 +408,7 @@ const LeftToolView = ({ payload }) => {
         if (payload.type === 'calendar') return 'calendar';
         if (payload.type === 'email' || payload.type === 'email_list') return 'mail';
         if (payload.type === 'route') return 'route';
+        if (payload.type === 'system_check') return 'system';
         return 'none';
     }, [payload]);
 
@@ -371,6 +422,7 @@ const LeftToolView = ({ payload }) => {
     if (payload?.type === 'email') content = <EmailView payload={payload} />;
     if (payload?.type === 'email_list') content = <EmailListView payload={payload} />;
     if (payload?.type === 'route') content = <RouteView payload={payload} />;
+    if (payload?.type === 'system_check') content = <SystemCheckView payload={payload} />;
     if (payload?.type === 'clear') content = <EmptyState />;
 
     return (

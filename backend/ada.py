@@ -306,6 +306,186 @@ class AudioLoop:
         except Exception as e:
             print(f"[ADA DEBUG] [WARN] Failed to emit tool view: {e}")
 
+    async def run_system_check(self, include_network_checks=True):
+        started_ts = time.time()
+        checks = []
+
+        def add_check(name, status, message, details=None, duration_ms=0):
+            item = {
+                "name": name,
+                "status": status,
+                "message": str(message),
+                "duration_ms": int(duration_ms),
+            }
+            if details is not None:
+                item["details"] = details
+            checks.append(item)
+
+        # Core: session health
+        t0 = time.time()
+        if self.session:
+            add_check("Model Session", "pass", "Live session active.", duration_ms=(time.time() - t0) * 1000)
+        else:
+            add_check("Model Session", "fail", "No active live session.", duration_ms=(time.time() - t0) * 1000)
+
+        # Core: project path
+        t0 = time.time()
+        try:
+            project_path = self.project_manager.get_current_project_path()
+            exists = bool(project_path and os.path.exists(project_path))
+            writable = bool(project_path and os.access(project_path, os.W_OK))
+            if exists and writable:
+                add_check(
+                    "Project Storage",
+                    "pass",
+                    f"Project path ready: {project_path}",
+                    {"path": str(project_path), "writable": True},
+                    (time.time() - t0) * 1000,
+                )
+            elif exists:
+                add_check(
+                    "Project Storage",
+                    "warn",
+                    f"Project path exists but may be read-only: {project_path}",
+                    {"path": str(project_path), "writable": False},
+                    (time.time() - t0) * 1000,
+                )
+            else:
+                add_check("Project Storage", "fail", "Project path missing.", duration_ms=(time.time() - t0) * 1000)
+        except Exception as e:
+            add_check("Project Storage", "fail", f"Project check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+        # Core: smart home cache status
+        t0 = time.time()
+        try:
+            cache_devices = self.kasa_agent.get_devices_list()
+            if cache_devices:
+                add_check(
+                    "Smart Home Cache",
+                    "pass",
+                    f"{len(cache_devices)} cached smart devices.",
+                    {"count": len(cache_devices)},
+                    (time.time() - t0) * 1000,
+                )
+            else:
+                add_check("Smart Home Cache", "warn", "No cached smart devices.", duration_ms=(time.time() - t0) * 1000)
+        except Exception as e:
+            add_check("Smart Home Cache", "fail", f"Smart device cache error: {e}", duration_ms=(time.time() - t0) * 1000)
+
+        if include_network_checks:
+            # Smart-home discovery probe
+            t0 = time.time()
+            try:
+                devices = await self.kasa_agent.discover_devices()
+                if devices:
+                    add_check(
+                        "Smart Home Discovery",
+                        "pass",
+                        f"Discovery found {len(devices)} device(s).",
+                        {"count": len(devices)},
+                        (time.time() - t0) * 1000,
+                    )
+                else:
+                    add_check("Smart Home Discovery", "warn", "Discovery found no devices.", duration_ms=(time.time() - t0) * 1000)
+            except Exception as e:
+                add_check("Smart Home Discovery", "fail", f"Discovery failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            # Printer discovery/status probe
+            t0 = time.time()
+            try:
+                printers = await self.printer_agent.discover_printers()
+                if printers:
+                    add_check(
+                        "Printer Discovery",
+                        "pass",
+                        f"Found {len(printers)} printer(s).",
+                        {"count": len(printers)},
+                        (time.time() - t0) * 1000,
+                    )
+                else:
+                    add_check("Printer Discovery", "warn", "No printers discovered.", duration_ms=(time.time() - t0) * 1000)
+            except Exception as e:
+                add_check("Printer Discovery", "fail", f"Printer check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            # Weather API probe
+            t0 = time.time()
+            try:
+                weather = await asyncio.to_thread(self.weather_agent.get_current_weather, "", "metric", "de")
+                add_check(
+                    "Weather API",
+                    "pass",
+                    f"Weather API ok for {weather.get('location', 'default')}.",
+                    {"location": weather.get("location")},
+                    (time.time() - t0) * 1000,
+                )
+            except Exception as e:
+                add_check("Weather API", "fail", f"Weather check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            # Route service probe
+            t0 = time.time()
+            try:
+                origin = resolve_default_route_origin()
+                route = await asyncio.to_thread(self.route_agent.plan_route, origin, "Berlin,DE", "driving", False)
+                add_check(
+                    "Route Service",
+                    "pass",
+                    f"Route API ok ({route.get('distance_km', 'n/a')} km test route).",
+                    {"origin": origin, "destination": "Berlin,DE"},
+                    (time.time() - t0) * 1000,
+                )
+            except Exception as e:
+                add_check("Route Service", "fail", f"Route check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            # Google Calendar probe
+            t0 = time.time()
+            try:
+                events = await asyncio.to_thread(self.google_calendar.list_upcoming_events, 1)
+                add_check(
+                    "Google Calendar",
+                    "pass",
+                    f"Calendar API reachable ({len(events)} event sample).",
+                    {"sample_count": len(events)},
+                    (time.time() - t0) * 1000,
+                )
+            except Exception as e:
+                add_check("Google Calendar", "warn", f"Calendar unavailable: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            # Gmail probe
+            t0 = time.time()
+            try:
+                msgs = await asyncio.to_thread(self.google_gmail.list_messages, 1, None)
+                add_check(
+                    "Gmail",
+                    "pass",
+                    f"Gmail API reachable ({len(msgs)} message sample).",
+                    {"sample_count": len(msgs)},
+                    (time.time() - t0) * 1000,
+                )
+            except Exception as e:
+                add_check("Gmail", "warn", f"Gmail unavailable: {e}", duration_ms=(time.time() - t0) * 1000)
+        else:
+            add_check("Network Checks", "warn", "Network checks skipped by request.", duration_ms=0)
+
+        passed = len([c for c in checks if c["status"] == "pass"])
+        failed = len([c for c in checks if c["status"] == "fail"])
+        warned = len([c for c in checks if c["status"] == "warn"])
+        total = len(checks)
+        duration_ms = int((time.time() - started_ts) * 1000)
+
+        summary = {
+            "passed": passed,
+            "failed": failed,
+            "warned": warned,
+            "total": total,
+            "duration_ms": duration_ms,
+            "timestamp": datetime.datetime.now().astimezone().isoformat(),
+        }
+
+        return {
+            "summary": summary,
+            "checks": checks,
+        }
+
     async def send_frame(self, frame_data):
         # Update the latest frame payload
         if isinstance(frame_data, bytes):
@@ -1501,6 +1681,58 @@ class AudioLoop:
                                 elif fc.name == "clear_detail_view":
                                     self.emit_tool_view({"type": "clear", "title": "Detail View"})
                                     result_str = "Detail view wurde geleert und auf Idle zurueckgesetzt."
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "system_check":
+                                    include_network_checks = bool(fc.args.get("include_network_checks", True))
+                                    print(
+                                        f"[ADA DEBUG] [TOOL] Tool Call: 'system_check' "
+                                        f"include_network_checks={include_network_checks}"
+                                    )
+
+                                    report = await self.run_system_check(include_network_checks=include_network_checks)
+                                    summary = report.get("summary", {})
+                                    checks = report.get("checks", [])
+
+                                    self.emit_tool_view({
+                                        "type": "system_check",
+                                        "title": "System Check Report",
+                                        "report": report,
+                                    })
+
+                                    if self.on_device_update:
+                                        self.on_device_update(self.kasa_agent.get_devices_list())
+
+                                    fail_items = [c for c in checks if c.get("status") == "fail"]
+                                    warn_items = [c for c in checks if c.get("status") == "warn"]
+
+                                    lines = [
+                                        "System Check abgeschlossen.",
+                                        (
+                                            f"Ergebnis: {summary.get('passed', 0)} OK, "
+                                            f"{summary.get('warned', 0)} Warnungen, "
+                                            f"{summary.get('failed', 0)} Fehler "
+                                            f"({summary.get('duration_ms', 0)} ms)."
+                                        ),
+                                    ]
+
+                                    if fail_items:
+                                        lines.append("Fehler:")
+                                        for item in fail_items[:6]:
+                                            lines.append(f"- {item.get('name')}: {item.get('message')}")
+
+                                    if warn_items:
+                                        lines.append("Warnungen:")
+                                        for item in warn_items[:6]:
+                                            lines.append(f"- {item.get('name')}: {item.get('message')}")
+
+                                    result_str = "\n".join(lines)
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,

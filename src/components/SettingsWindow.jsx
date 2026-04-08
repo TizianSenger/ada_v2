@@ -21,6 +21,7 @@ const TOOLS = [
     { id: 'get_weather_full_report', label: 'Get Weather Full Report' },
     { id: 'route_plan', label: 'Route Plan (Free)' },
     { id: 'clear_detail_view', label: 'Clear Detail View' },
+    { id: 'system_check', label: 'System Check' },
     { id: 'iterate_cad', label: 'Iterate CAD' },
     { id: 'connect_google_workspace', label: 'Connect Google Workspace' },
     { id: 'list_calendar_events', label: 'List Calendar Events' },
@@ -81,6 +82,7 @@ const TOOL_GROUPS = {
         'get_weather_forecast',
         'get_weather_full_report',
         'route_plan',
+        'system_check',
     ],
 };
 
