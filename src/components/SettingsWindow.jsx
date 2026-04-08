@@ -83,6 +83,7 @@ const TOOL_GROUPS = {
 };
 
 const TAB_BUTTON = 'px-3 py-1.5 text-xs rounded-md border transition-colors';
+const VOICE_OPTIONS = ['Kore', 'Orus', 'Fenrir', 'Charon', 'Puck', 'Aoede'];
 
 const ToggleRow = ({ label, enabled, onToggle }) => (
     <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
@@ -128,6 +129,8 @@ const SettingsWindow = ({
     const [googleConnecting, setGoogleConnecting] = useState(false);
     const [defaultWeatherLocation, setDefaultWeatherLocation] = useState('Berlin,DE');
     const [weatherMessage, setWeatherMessage] = useState('');
+    const [voiceName, setVoiceName] = useState('Kore');
+    const [voiceMessage, setVoiceMessage] = useState('');
     const [activeTab, setActiveTab] = useState('general');
     const [activeToolGroup, setActiveToolGroup] = useState('Core');
     const [windowPos, setWindowPos] = useState({ x: 40, y: 84 });
@@ -172,6 +175,7 @@ const SettingsWindow = ({
                 }
                 setApiKeyConfigured(Boolean(settings.gemini_api_key_configured));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
+                setVoiceName(settings.voice_name || 'Kore');
             }
         };
 
@@ -281,6 +285,12 @@ const SettingsWindow = ({
         setWeatherMessage('Default weather location saved.');
     };
 
+    const saveVoiceName = () => {
+        const selected = String(voiceName || '').trim() || 'Kore';
+        socket.emit('update_settings', { voice_name: selected });
+        setVoiceMessage(`Voice saved: ${selected}. Restart voice session to apply immediately.`);
+    };
+
     const renderGeneralTab = () => (
         <div className="space-y-5">
             <div>
@@ -340,6 +350,30 @@ const SettingsWindow = ({
                         </button>
                     </div>
                     {googleConnectMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{googleConnectMessage}</p>}
+                </div>
+            </div>
+
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Voice</h3>
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <select
+                        value={voiceName}
+                        onChange={(e) => setVoiceName(e.target.value)}
+                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                    >
+                        {VOICE_OPTIONS.map((name) => (
+                            <option key={name} value={name}>{name}</option>
+                        ))}
+                    </select>
+                    <div className="flex items-center justify-end mt-2">
+                        <button
+                            onClick={saveVoiceName}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                        >
+                            Save Voice
+                        </button>
+                    </div>
+                    {voiceMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{voiceMessage}</p>}
                 </div>
             </div>
 

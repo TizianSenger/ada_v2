@@ -101,6 +101,7 @@ DEFAULT_SETTINGS = {
     "printers": [], # List of {host, port, name, type}
     "kasa_devices": [], # List of {ip, alias, model}
     "default_weather_location": "Berlin,DE",
+    "voice_name": "Kore",
     "camera_flipped": False, # Invert cursor horizontal direction
     "gemini_api_key": ""
 }
@@ -1151,6 +1152,17 @@ async def update_settings(sid, data):
     if "default_weather_location" in data:
         SETTINGS["default_weather_location"] = str(data.get("default_weather_location", "") or "").strip() or "Berlin,DE"
         print(f"[SERVER] Default weather location set to: {SETTINGS['default_weather_location']}")
+
+    if "voice_name" in data:
+        voice_name = str(data.get("voice_name", "") or "").strip() or "Kore"
+        SETTINGS["voice_name"] = voice_name
+        try:
+            ada.update_voice_name(voice_name)
+            print(f"[SERVER] Voice name set to: {voice_name}")
+            await sio.emit('status', {'msg': f'Voice set to {voice_name}. Restart voice session to apply immediately.'}, room=sid)
+        except Exception as e:
+            print(f"[SERVER] Failed to set voice name: {e}")
+            await sio.emit('error', {'msg': f'Failed to set voice: {str(e)}'}, room=sid)
 
     if "gemini_api_key" in data:
         new_key = str(data.get("gemini_api_key", "") or "").strip()

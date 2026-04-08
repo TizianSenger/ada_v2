@@ -40,6 +40,15 @@ load_dotenv()
 _client = None
 _client_api_key = None
 
+SUPPORTED_VOICE_NAMES = {
+    "Kore",
+    "Orus",
+    "Fenrir",
+    "Charon",
+    "Puck",
+    "Aoede",
+}
+
 
 def _get_api_key_from_settings():
     settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
@@ -62,6 +71,32 @@ def resolve_api_key():
     return _get_api_key_from_settings()
 
 
+def _get_voice_name_from_settings():
+    settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+    if not os.path.exists(settings_path):
+        return None
+
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        name = str(data.get("voice_name", "") or "").strip()
+        return name or None
+    except Exception:
+        return None
+
+
+def resolve_voice_name():
+    env_name = str(os.getenv("ADA_VOICE_NAME", "") or "").strip()
+    if env_name in SUPPORTED_VOICE_NAMES:
+        return env_name
+
+    settings_name = _get_voice_name_from_settings()
+    if settings_name in SUPPORTED_VOICE_NAMES:
+        return settings_name
+
+    return "Kore"
+
+
 def get_genai_client():
     global _client, _client_api_key
 
@@ -78,26 +113,36 @@ def get_genai_client():
 tools = [{'google_search': {}}, {"function_declarations": function_declarations}]
 SUPPORTED_TOOL_NAMES = {decl["name"] for decl in function_declarations}
 
-# --- CONFIG UPDATE: Enabled Transcription ---
-config = types.LiveConnectConfig(
-    response_modalities=["AUDIO"],
-    # We switch these from [] to {} to enable them with default settings
-    output_audio_transcription={}, 
-    input_audio_transcription={},
-    system_instruction="Your name is Ada, you are a state-of-the-art AI assistant designed to help with a wide range of tasks. Your main goal is to satisfy the user's requests as efficiently and accurately as possible."
-        "You have a witty and charming personality. "
-        "I am your creator and you address me as 'Sir'. "
-        "When answering, respond using complete and concise sentences to keep a quick pacing and keep the conversation flowing. "
-        "You have a cheeky, defiant, and very snobbish personality.",
-    tools=tools,
-    speech_config=types.SpeechConfig(
-        voice_config=types.VoiceConfig(
-            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                voice_name="Kore"
+def _build_live_config(voice_name: str):
+    selected_voice = voice_name if voice_name in SUPPORTED_VOICE_NAMES else "Kore"
+    return types.LiveConnectConfig(
+        response_modalities=["AUDIO"],
+        # We switch these from [] to {} to enable them with default settings
+        output_audio_transcription={},
+        input_audio_transcription={},
+        system_instruction="Your name is Ada, you are a state-of-the-art AI assistant designed to help with a wide range of tasks. Your main goal is to satisfy the user's requests as efficiently and accurately as possible."
+            "You have a witty and charming personality. "
+            "I am your creator and you address me as 'Sir'. "
+            "When answering, respond using complete and concise sentences to keep a quick pacing and keep the conversation flowing. "
+            "You have a cheeky, defiant, and very snobbish personality.",
+        tools=tools,
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=selected_voice
+                )
             )
         )
     )
-)
+
+
+config = _build_live_config(resolve_voice_name())
+
+
+def update_voice_name(voice_name: str):
+    global config
+    name = str(voice_name or "").strip()
+    config = _build_live_config(name)
 
 pya = pyaudio.PyAudio()
 
