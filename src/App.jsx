@@ -346,7 +346,7 @@ function App() {
             hasAutoConnectedRef.current = true;
 
             // Trigger Kasa and Printer Discovery
-            socket.emit('discover_kasa');
+            socket.emit('discover_home');
             socket.emit('discover_printers');
 
             // Connect to model with small delay for socket stability
@@ -1409,7 +1409,7 @@ function App() {
     const toggleKasaWindow = () => {
         if (!showKasaWindow) {
             // Maybe trigger discover instantly?
-            if (kasaDevices.length === 0) socket.emit('discover_kasa');
+            if (kasaDevices.length === 0) socket.emit('discover_home');
         }
         setShowKasaWindow(!showKasaWindow);
     };

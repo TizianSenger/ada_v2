@@ -33,7 +33,7 @@ const KasaWindow = ({
 
     const handleDiscover = () => {
         setIsThinking(true);
-        socket.emit('discover_kasa');
+        socket.emit('discover_home');
         // Reset thinking after 5s if no response (safety)
         setTimeout(() => setIsThinking(false), 5000);
     };
@@ -46,24 +46,24 @@ const KasaWindow = ({
 
     const handleToggle = (ip, currentState) => {
         setLoadingDevices(prev => ({ ...prev, [ip]: true }));
-        socket.emit('control_kasa', {
-            ip: ip,
+        socket.emit('control_home', {
+            target: ip,
             action: currentState ? 'off' : 'on'
         });
     };
 
 
     const handleBrightness = (ip, val) => {
-        socket.emit('control_kasa', {
-            ip: ip,
+        socket.emit('control_home', {
+            target: ip,
             action: 'brightness',
             value: parseInt(val)
         });
     };
 
     const handleColor = (ip, hue) => {
-        socket.emit('control_kasa', {
-            ip: ip,
+        socket.emit('control_home', {
+            target: ip,
             action: 'color',
             value: { h: parseInt(hue), s: 100, v: 100 }
         });
@@ -91,7 +91,7 @@ const KasaWindow = ({
             <div data-drag-handle className="flex items-center justify-between pb-2 border-b border-white/10 mb-2 cursor-grab active:cursor-grabbing">
                 <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${devices.length > 0 ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
-                    <h3 className="font-bold text-cyan-400 tracking-wider text-sm">SMART CONTROL</h3>
+                    <h3 className="font-bold text-cyan-400 tracking-wider text-sm">HOME CONTROL</h3>
                 </div>
                 <button
                     onClick={onClose}
@@ -106,12 +106,12 @@ const KasaWindow = ({
 
                 {devices.length === 0 && !isThinking && (
                     <div className="flex flex-col items-center justify-center p-8 text-center opacity-50">
-                        <p className="text-xs mb-4">No devices found. Ensure they are on the same network.</p>
+                        <p className="text-xs mb-4">No smart devices found. Ensure they are on the same network.</p>
                         <button
                             onClick={handleDiscover}
                             className="flex items-center gap-2 px-4 py-2 bg-cyan-900/30 border border-cyan-500/30 rounded-lg hover:bg-cyan-500/20 hover:border-cyan-500 transition-all text-xs font-mono text-cyan-300"
                         >
-                            <RefreshCw size={14} /> DISCOVER LIGHTS
+                            <RefreshCw size={14} /> DISCOVER DEVICES
                         </button>
                     </div>
                 )}
@@ -128,7 +128,7 @@ const KasaWindow = ({
                         <div className="flex items-center justify-between mb-2">
                             <div className="flex flex-col">
                                 <span className="font-bold text-sm text-white">{dev.alias}</span>
-                                <span className="text-[10px] text-white/40 font-mono">{dev.ip}</span>
+                                <span className="text-[10px] text-white/40 font-mono">{dev.ip} {dev.provider ? `(${dev.provider})` : ''}</span>
                             </div>
                             <button
                                 onClick={() => handleToggle(dev.ip, dev.is_on)}
@@ -138,6 +138,7 @@ const KasaWindow = ({
                                     : 'bg-white/5 text-gray-500 hover:text-white'}
                                     ${loadingDevices[dev.ip] ? 'opacity-50 cursor-not-allowed' : ''}
                                 `}
+                                title="Toggle power"
                             >
                                 {loadingDevices[dev.ip] ? (
                                     <div className="w-[18px] h-[18px] border-2 border-current border-t-transparent rounded-full animate-spin" />

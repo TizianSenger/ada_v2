@@ -133,6 +133,10 @@ const SettingsWindow = ({
     const [weatherMessage, setWeatherMessage] = useState('');
     const [voiceName, setVoiceName] = useState('Kore');
     const [voiceMessage, setVoiceMessage] = useState('');
+    const [tapoUsername, setTapoUsername] = useState('');
+    const [tapoPassword, setTapoPassword] = useState('');
+    const [tapoPasswordConfigured, setTapoPasswordConfigured] = useState(false);
+    const [tapoMessage, setTapoMessage] = useState('');
     const [activeTab, setActiveTab] = useState('general');
     const [activeToolGroup, setActiveToolGroup] = useState('Core');
     const [windowPos, setWindowPos] = useState({ x: 40, y: 84 });
@@ -178,6 +182,8 @@ const SettingsWindow = ({
                 setApiKeyConfigured(Boolean(settings.gemini_api_key_configured));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
                 setVoiceName(settings.voice_name || 'Kore');
+                setTapoUsername(settings.tapo_username || '');
+                setTapoPasswordConfigured(Boolean(settings.tapo_password_configured));
             }
         };
 
@@ -293,6 +299,21 @@ const SettingsWindow = ({
         setVoiceMessage(`Voice saved: ${selected}. Restart voice session to apply immediately.`);
     };
 
+    const saveTapoAccount = () => {
+        const username = String(tapoUsername || '').trim();
+        const payload = { tapo_username: username };
+
+        const enteredPassword = String(tapoPassword || '').trim();
+        if (enteredPassword) {
+            payload.tapo_password = enteredPassword;
+        }
+
+        socket.emit('update_settings', payload);
+        setTapoPassword('');
+        setTapoPasswordConfigured(Boolean(enteredPassword) || tapoPasswordConfigured);
+        setTapoMessage('TP-Link/Tapo Account gespeichert. Danach Discover Devices ausfuehren.');
+    };
+
     const renderGeneralTab = () => (
         <div className="space-y-5">
             <div>
@@ -401,6 +422,44 @@ const SettingsWindow = ({
                     {weatherMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{weatherMessage}</p>}
                 </div>
             </div>
+
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">TP-Link / Tapo Account</h3>
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <div className="text-[10px] text-cyan-500/70 mb-2">
+                        Nutzt deinen Tapo Login fuer Discovery und Steuerung von TP-Link Steckdosen/Lampen.
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                            type="text"
+                            value={tapoUsername}
+                            onChange={(e) => setTapoUsername(e.target.value)}
+                            placeholder="TP-Link Account E-Mail"
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                        <input
+                            type="password"
+                            value={tapoPassword}
+                            onChange={(e) => setTapoPassword(e.target.value)}
+                            placeholder={tapoPasswordConfigured ? 'Passwort gespeichert (neu eingeben zum Aendern)' : 'TP-Link Passwort'}
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                    </div>
+                    <div className="flex items-center justify-between mt-2">
+                        <span className="text-[10px] text-cyan-500/70">
+                            {tapoPasswordConfigured ? 'Passwort hinterlegt' : 'Kein Passwort hinterlegt'}
+                        </span>
+                        <button
+                            onClick={saveTapoAccount}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                        >
+                            Save Tapo Account
+                        </button>
+                    </div>
+                    {tapoMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{tapoMessage}</p>}
+                </div>
+            </div>
+
         </div>
     );
 

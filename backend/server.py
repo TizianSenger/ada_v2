@@ -102,6 +102,8 @@ DEFAULT_SETTINGS = {
     "printers": [], # List of {host, port, name, type}
     "kasa_devices": [], # List of {ip, alias, model}
     "default_weather_location": "Berlin,DE",
+    "tapo_username": "",
+    "tapo_password": "",
     "voice_name": "Kore",
     "camera_flipped": False, # Invert cursor horizontal direction
     "gemini_api_key": ""
@@ -114,6 +116,8 @@ def _settings_for_client():
     public_settings = dict(SETTINGS)
     api_key = str(public_settings.pop("gemini_api_key", "") or "").strip()
     public_settings["gemini_api_key_configured"] = bool(api_key)
+    tapo_password = str(public_settings.pop("tapo_password", "") or "").strip()
+    public_settings["tapo_password_configured"] = bool(tapo_password)
     return public_settings
 
 
@@ -252,7 +256,11 @@ def save_settings():
 load_settings()
 
 authenticator = None
-kasa_agent = KasaAgent(known_devices=SETTINGS.get("kasa_devices"))
+kasa_agent = KasaAgent(
+    known_devices=SETTINGS.get("kasa_devices"),
+    tapo_username=SETTINGS.get("tapo_username", ""),
+    tapo_password=SETTINGS.get("tapo_password", ""),
+)
 # tool_permissions is now SETTINGS["tool_permissions"]
 
 @app.on_event("startup")
@@ -716,29 +724,32 @@ async def discover_kasa(sid):
     try:
         devices = await kasa_agent.discover_devices()
         await sio.emit('kasa_devices', devices)
-        await sio.emit('status', {'msg': f"Found {len(devices)} Kasa devices"})
-        
-        # Save to settings
-        # devices is a list of full device info dicts. minimizing for storage.
+        await sio.emit('status', {'msg': f"Found {len(devices)} smart devices"})
+
+        # Persist discovered Kasa/Tapo devices only.
         saved_devices = []
         for d in devices:
             saved_devices.append({
-                "ip": d["ip"],
-                "alias": d["alias"],
-                "model": d["model"]
+                "provider": "kasa",
+                "ip": d.get("ip"),
+                "alias": d.get("alias"),
+                "model": d.get("model"),
+                "type": d.get("type"),
             })
-        
-        # Merge with existing to preserve any manual overrides? 
-        # For now, just overwrite with latest scan result + previously known if we want to be fancy,
-        # but user asked for "Any new devices that are scanned are added there".
-        # A simple full persistence of current state is safest.
+
         SETTINGS["kasa_devices"] = saved_devices
         save_settings()
-        print(f"[SERVER] Saved {len(saved_devices)} Kasa devices to settings.")
+        print(f"[SERVER] Saved {len(SETTINGS['kasa_devices'])} Kasa/Tapo devices to settings.")
         
     except Exception as e:
         print(f"Error discovering kasa: {e}")
         await sio.emit('error', {'msg': f"Kasa Discovery Failed: {str(e)}"})
+
+
+@sio.event
+async def discover_home(sid):
+    """Alias for generalized home discovery used by the frontend."""
+    await discover_kasa(sid)
 
 @sio.event
 async def iterate_cad(sid, data):
@@ -1046,10 +1057,10 @@ async def get_slicer_profiles(sid):
 
 @sio.event
 async def control_kasa(sid, data):
-    # data: { ip, action: "on"|"off"|"brightness"|"color", value: ... }
-    ip = data.get('ip')
+    # data: { target|ip, action: "on"|"off"|"brightness"|"color", value: ... }
+    ip = data.get('target') or data.get('ip')
     action = data.get('action')
-    print(f"Kasa Control: {ip} -> {action}")
+    print(f"Home Control: {ip} -> {action}")
     
     try:
         success = False
@@ -1073,13 +1084,20 @@ async def control_kasa(sid, data):
                 'is_on': True if action == "on" else (False if action == "off" else None),
                 'brightness': data.get('value') if action == "brightness" else None,
             })
+            await sio.emit('kasa_devices', kasa_agent.get_devices_list())
  
         else:
-             await sio.emit('error', {'msg': f"Failed to control device {ip}"})
+             await sio.emit('error', {'msg': f"Failed to control smart device {ip}."})
 
     except Exception as e:
-         print(f"Error controlling kasa: {e}")
-         await sio.emit('error', {'msg': f"Kasa Control Error: {str(e)}"})
+         print(f"Error controlling smart device: {e}")
+         await sio.emit('error', {'msg': f"Smart Home Control Error: {str(e)}"})
+
+
+@sio.event
+async def control_home(sid, data):
+    """Alias for generalized home control used by the frontend."""
+    await control_kasa(sid, data)
 
 @sio.event
 async def get_settings(sid):
@@ -1174,6 +1192,18 @@ async def update_settings(sid, data):
             await sio.emit('status', {'msg': 'Gemini API key saved.'}, room=sid)
         else:
             await sio.emit('error', {'msg': 'API key is empty. Please paste a valid key.'}, room=sid)
+
+    if "tapo_username" in data or "tapo_password" in data:
+        if "tapo_username" in data:
+            SETTINGS["tapo_username"] = str(data.get("tapo_username", "") or "").strip()
+        if "tapo_password" in data:
+            SETTINGS["tapo_password"] = str(data.get("tapo_password", "") or "").strip()
+
+        kasa_agent.set_tapo_credentials(
+            SETTINGS.get("tapo_username", ""),
+            SETTINGS.get("tapo_password", ""),
+        )
+        await sio.emit('status', {'msg': 'TP-Link/Tapo account updated. Run Discover Devices to refresh.'}, room=sid)
 
     save_settings()
     # Broadcast new full settings
