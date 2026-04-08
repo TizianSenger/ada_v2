@@ -97,6 +97,20 @@ def resolve_voice_name():
     return "Kore"
 
 
+def resolve_default_route_origin():
+    settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+    if not os.path.exists(settings_path):
+        return "Berlin,DE"
+
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        value = str(data.get("default_weather_location", "") or "").strip()
+        return value or "Berlin,DE"
+    except Exception:
+        return "Berlin,DE"
+
+
 def get_genai_client():
     global _client, _client_api_key
 
@@ -1497,14 +1511,15 @@ class AudioLoop:
                                     destination = str(fc.args.get("destination", "") or "").strip()
                                     mode = "driving"
                                     alternatives = bool(fc.args.get("alternatives", False))
+                                    resolved_origin = origin or resolve_default_route_origin()
 
-                                    if not origin or not destination:
-                                        result_str = "Missing required fields. Provide origin and destination."
+                                    if not destination:
+                                        result_str = "Missing required field: destination."
                                     else:
                                         try:
                                             route = await asyncio.to_thread(
                                                 self.route_agent.plan_route,
-                                                origin,
+                                                resolved_origin,
                                                 destination,
                                                 mode,
                                                 alternatives,
@@ -1518,7 +1533,7 @@ class AudioLoop:
 
                                             result_str = (
                                                 f"Route geplant ({route.get('mode', mode)}): "
-                                                f"{route.get('origin', {}).get('label', origin)} -> "
+                                                f"{route.get('origin', {}).get('label', resolved_origin)} -> "
                                                 f"{route.get('destination', {}).get('label', destination)}. "
                                                 f"Distanz {route.get('distance_km', 'n/a')} km, "
                                                 f"Dauer {route.get('duration_human', str(route.get('duration_min', 'n/a')) + ' min')}. "

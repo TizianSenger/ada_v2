@@ -326,7 +326,7 @@ _route_plan_tool = {
         "properties": {
             "origin": {
                 "type": "STRING",
-                "description": "Start location, e.g. Ingolstadt or Geisenfeld,DE."
+                "description": "Optional start location. If omitted, uses Destination from settings as default origin."
             },
             "destination": {
                 "type": "STRING",
@@ -337,7 +337,7 @@ _route_plan_tool = {
                 "description": "If true, request alternative routes."
             }
         },
-        "required": ["origin", "destination"]
+        "required": ["destination"]
     }
 }
 

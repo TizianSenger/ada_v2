@@ -279,12 +279,12 @@ const SettingsWindow = ({
     const saveWeatherLocation = () => {
         const trimmed = defaultWeatherLocation.trim();
         if (!trimmed) {
-            setWeatherMessage('Please enter a valid location (e.g. Berlin,DE).');
+            setWeatherMessage('Please enter a valid destination (e.g. Berlin,DE).');
             return;
         }
 
         socket.emit('update_settings', { default_weather_location: trimmed });
-        setWeatherMessage('Default weather location saved.');
+        setWeatherMessage('Destination saved. Used for weather and as default route origin.');
     };
 
     const saveVoiceName = () => {
@@ -380,22 +380,22 @@ const SettingsWindow = ({
             </div>
 
             <div>
-                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Weather Defaults</h3>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Destination</h3>
                 <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
                     <input
                         type="text"
                         value={defaultWeatherLocation}
                         onChange={(e) => setDefaultWeatherLocation(e.target.value)}
-                        placeholder="Default location (e.g. Berlin,DE)"
+                        placeholder="Destination / home base (e.g. Berlin,DE)"
                         className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
                     />
                     <div className="flex items-center justify-between mt-2">
-                        <span className="text-[10px] text-cyan-500/70">OPENWEATHER_API_KEY in .env required</span>
+                        <span className="text-[10px] text-cyan-500/70">Used for weather + default route origin</span>
                         <button
                             onClick={saveWeatherLocation}
                             className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
                         >
-                            Save Location
+                            Save Destination
                         </button>
                     </div>
                     {weatherMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{weatherMessage}</p>}
