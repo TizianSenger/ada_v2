@@ -9,6 +9,45 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
     const [pinMessage, setPinMessage] = useState('');
     const [isPinChecking, setIsPinChecking] = useState(false);
 
+    const playUnlockTone = () => {
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) {
+                return;
+            }
+
+            const ctx = new AudioCtx();
+            const master = ctx.createGain();
+            master.gain.setValueAtTime(0.0001, ctx.currentTime);
+            master.gain.exponentialRampToValueAtTime(0.07, ctx.currentTime + 0.02);
+            master.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.42);
+            master.connect(ctx.destination);
+
+            const osc1 = ctx.createOscillator();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(660, ctx.currentTime);
+            osc1.frequency.exponentialRampToValueAtTime(990, ctx.currentTime + 0.35);
+            osc1.connect(master);
+
+            const osc2 = ctx.createOscillator();
+            osc2.type = 'triangle';
+            osc2.frequency.setValueAtTime(495, ctx.currentTime);
+            osc2.frequency.exponentialRampToValueAtTime(742, ctx.currentTime + 0.35);
+            osc2.connect(master);
+
+            osc1.start(ctx.currentTime);
+            osc2.start(ctx.currentTime + 0.01);
+            osc1.stop(ctx.currentTime + 0.42);
+            osc2.stop(ctx.currentTime + 0.40);
+
+            setTimeout(() => {
+                ctx.close().catch(() => { });
+            }, 550);
+        } catch (e) {
+            console.warn('Unlock tone failed:', e);
+        }
+    };
+
     useEffect(() => {
         if (!socket) return;
 
@@ -18,6 +57,7 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
                 // Start Unlock Sequence
                 setIsUnlocking(true);
                 setMessage("Identity Verified. Access Granted.");
+                playUnlockTone();
 
                 // Wait for animation then notify parent
                 setTimeout(() => {

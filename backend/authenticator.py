@@ -8,11 +8,14 @@ import base64
 import numpy as np
 import urllib.request
 import sys
+from collections import deque
 
 class FaceAuthenticator:
     # MediaPipe Face Landmarker model URL
     MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
     MODEL_PATH = os.path.join(os.path.dirname(__file__), "face_landmarker.task")
+
+    NOSE_TIP_IDX = 1
     
     def __init__(self, reference_image_path="reference.jpg", on_status_change=None, on_frame=None):
         """
@@ -28,6 +31,8 @@ class FaceAuthenticator:
         self.running = False
         self.reference_landmarks = None
         self.landmarker = None
+
+        self._reset_security_state()
 
         self._ensure_model()
         self._init_landmarker()
@@ -62,10 +67,10 @@ class FaceAuthenticator:
         except Exception as e:
             print(f"[AUTH] [ERR] Failed to initialize Face Landmarker: {e}")
 
-    def _extract_landmarks(self, image_rgb):
+    def _extract_landmark_points(self, image_rgb):
         """
         Extract normalized face landmarks from an RGB image.
-        Returns a flattened numpy array of (x, y, z) coordinates, or None if no face found.
+        Returns numpy array with shape (N, 3), or None if no face found.
         """
         if self.landmarker is None:
             return None
@@ -76,13 +81,122 @@ class FaceAuthenticator:
             
             if result.face_landmarks and len(result.face_landmarks) > 0:
                 landmarks = result.face_landmarks[0]
-                # Convert to numpy array of (x, y, z) coordinates
                 coords = np.array([[lm.x, lm.y, lm.z] for lm in landmarks], dtype=np.float32)
-                return coords.flatten()
+                return coords
             return None
         except Exception as e:
             print(f"[AUTH] [ERR] Landmark extraction failed: {e}")
             return None
+
+    def _extract_landmarks(self, image_rgb):
+        points = self._extract_landmark_points(image_rgb)
+        if points is None:
+            return None
+        return self._normalized_landmark_vector(points)
+
+    def _reset_security_state(self):
+        self.similarity_history = deque(maxlen=12)
+        self.nose_x_history = deque(maxlen=20)
+        self.quality_frame_count = 0
+
+    def _similarity_score(self, landmarks1, landmarks2):
+        if landmarks1 is None or landmarks2 is None:
+            return 0.0
+
+        norm1 = np.linalg.norm(landmarks1)
+        norm2 = np.linalg.norm(landmarks2)
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        return float(np.dot(landmarks1, landmarks2) / (norm1 * norm2))
+
+    def _normalized_landmark_vector(self, points):
+        # Normalize translation/scale to reduce distance and framing sensitivity.
+        center = np.mean(points, axis=0)
+        centered = points - center
+        scale_xy = float(np.std(centered[:, :2]))
+        if scale_xy < 1e-6:
+            scale_xy = 1e-6
+        centered[:, :2] = centered[:, :2] / scale_xy
+
+        # Keep Z, but normalized by its own spread for pose-depth consistency.
+        scale_z = float(np.std(centered[:, 2]))
+        if scale_z < 1e-6:
+            scale_z = 1e-6
+        centered[:, 2] = centered[:, 2] / scale_z
+        return centered.flatten()
+
+    def _face_bbox_ratio(self, points):
+        min_xy = np.min(points[:, :2], axis=0)
+        max_xy = np.max(points[:, :2], axis=0)
+        w = max(0.0, float(max_xy[0] - min_xy[0]))
+        h = max(0.0, float(max_xy[1] - min_xy[1]))
+        return w * h
+
+    def _frame_sharpness(self, frame_bgr):
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+    def _distance_profile(self, face_ratio):
+        # Profile by apparent face size in frame to keep verification stable at different distances.
+        if face_ratio < 0.10:
+            return {
+                "name": "far",
+                "face_ratio_min": 0.03,
+                "face_ratio_max": 0.72,
+                "sharpness_min": 20.0,
+                "z_std_min": 0.002,
+                "z_std_max": 0.12,
+                "liveness_min_motion": 0.004,
+                "liveness_max_motion": 0.09,
+                "unlock_window": 7,
+                "min_similarity_per_frame": 0.91,
+                "avg_similarity_required": 0.945,
+                "fast_unlock_window": 5,
+                "fast_min_similarity": 0.97,
+            }
+        if face_ratio < 0.33:
+            return {
+                "name": "mid",
+                "face_ratio_min": 0.03,
+                "face_ratio_max": 0.72,
+                "sharpness_min": 35.0,
+                "z_std_min": 0.003,
+                "z_std_max": 0.13,
+                "liveness_min_motion": 0.006,
+                "liveness_max_motion": 0.09,
+                "unlock_window": 6,
+                "min_similarity_per_frame": 0.91,
+                "avg_similarity_required": 0.945,
+                "fast_unlock_window": 4,
+                "fast_min_similarity": 0.965,
+            }
+        return {
+            "name": "near",
+            "face_ratio_min": 0.03,
+            "face_ratio_max": 0.80,
+            "sharpness_min": 45.0,
+            "z_std_min": 0.004,
+            "z_std_max": 0.14,
+            "liveness_min_motion": 0.008,
+            "liveness_max_motion": 0.10,
+            "unlock_window": 5,
+            "min_similarity_per_frame": 0.90,
+            "avg_similarity_required": 0.94,
+            "fast_unlock_window": 4,
+            "fast_min_similarity": 0.96,
+        }
+
+    def _passive_liveness_ok(self, points, profile):
+        nose_x = float(points[self.NOSE_TIP_IDX][0])
+        self.nose_x_history.append(nose_x)
+
+        if len(self.nose_x_history) < 6:
+            return False
+
+        movement = max(self.nose_x_history) - min(self.nose_x_history)
+        # Too static looks spoof-like, too large suggests unstable tracking.
+        return profile["liveness_min_motion"] <= movement <= profile["liveness_max_motion"]
 
     def _compare_landmarks(self, landmarks1, landmarks2, threshold=0.15):
         """
@@ -92,15 +206,7 @@ class FaceAuthenticator:
         if landmarks1 is None or landmarks2 is None:
             return False
         
-        # Normalize vectors
-        norm1 = np.linalg.norm(landmarks1)
-        norm2 = np.linalg.norm(landmarks2)
-        
-        if norm1 == 0 or norm2 == 0:
-            return False
-        
-        # Cosine similarity
-        similarity = np.dot(landmarks1, landmarks2) / (norm1 * norm2)
+        similarity = self._similarity_score(landmarks1, landmarks2)
         
         # Threshold check (similarity should be close to 1 for a match)
         is_match = similarity > (1 - threshold)
@@ -144,6 +250,7 @@ class FaceAuthenticator:
              return
 
         self.running = True
+        self._reset_security_state()
         print("[AUTH] Starting camera for authentication...")
         
         # Capture the current (main) event loop
@@ -217,8 +324,6 @@ class FaceAuthenticator:
              self.running = False
              return
 
-        process_this_frame = True
-        
         while self.running and not self.authenticated:
             ret, frame = video_capture.read()
             if not ret:
@@ -228,19 +333,63 @@ class FaceAuthenticator:
             # Convert BGR to RGB
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
-            # Process every other frame for performance
-            if process_this_frame:
-                current_landmarks = self._extract_landmarks(rgb_frame)
-                
-                if self._compare_landmarks(self.reference_landmarks, current_landmarks):
+            current_points = self._extract_landmark_points(rgb_frame)
+            current_landmarks = None if current_points is None else self._normalized_landmark_vector(current_points)
+
+            if current_points is None:
+                self.similarity_history.clear()
+            else:
+                face_ratio = self._face_bbox_ratio(current_points)
+                profile = self._distance_profile(face_ratio)
+                sharpness = self._frame_sharpness(frame)
+                z_std = float(np.std(current_points[:, 2]))
+
+                # Quality gates to reject tiny, blurry, or implausible face geometry frames.
+                quality_ok = (
+                    profile["face_ratio_min"] <= face_ratio <= profile["face_ratio_max"]
+                    and sharpness >= profile["sharpness_min"]
+                    and profile["z_std_min"] <= z_std <= profile["z_std_max"]
+                )
+
+                if quality_ok:
+                    self.quality_frame_count += 1
+                    similarity = self._similarity_score(self.reference_landmarks, current_landmarks)
+                    if similarity >= profile["min_similarity_per_frame"]:
+                        self.similarity_history.append(similarity)
+                    else:
+                        self.similarity_history.clear()
+                else:
+                    self.similarity_history.clear()
+
+                passive_liveness_ok = self._passive_liveness_ok(current_points, profile)
+                fast_slice = list(self.similarity_history)[-profile["fast_unlock_window"]:]
+                fast_unlock_ok = (
+                    len(fast_slice) >= profile["fast_unlock_window"]
+                    and min(fast_slice) >= profile["fast_min_similarity"]
+                    and self.quality_frame_count >= profile["fast_unlock_window"]
+                )
+
+                secure_unlock_ok = False
+                if len(self.similarity_history) >= profile["unlock_window"] and passive_liveness_ok:
+                    avg_similarity = float(np.mean(self.similarity_history))
+                    min_similarity = float(np.min(self.similarity_history))
+                    secure_unlock_ok = (
+                        avg_similarity >= profile["avg_similarity_required"]
+                        and min_similarity >= profile["min_similarity_per_frame"]
+                    )
+
+                if fast_unlock_ok or secure_unlock_ok:
                     self.authenticated = True
-                    print("[AUTH] [OPEN] FACE RECOGNIZED! Access Granted.")
+                    avg_similarity = float(np.mean(self.similarity_history)) if self.similarity_history else 0.0
+                    min_similarity = float(np.min(self.similarity_history)) if self.similarity_history else 0.0
+                    print(
+                        "[AUTH] [OPEN] FACE VERIFIED (fast/secure multi-frame). "
+                        f"profile={profile['name']}, avg={avg_similarity:.4f}, min={min_similarity:.4f}, quality_frames={self.quality_frame_count}"
+                    )
                     if self.on_status_change:
                         asyncio.run_coroutine_threadsafe(self.on_status_change(True), loop)
                     self.running = False
                     break
-
-            process_this_frame = not process_this_frame
 
             # Send frame to frontend if callback exists
             if self.on_frame:
