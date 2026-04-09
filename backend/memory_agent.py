@@ -14,7 +14,8 @@ class MemoryAgent:
         os.makedirs(self._persist_dir, exist_ok=True)
 
         self._client = chromadb.PersistentClient(path=self._persist_dir)
-        self._collection = self._client.get_or_create_collection(name=collection_name)
+        self._collection_name = str(collection_name)
+        self._collection = self._client.get_or_create_collection(name=self._collection_name)
 
     def store(self, text: str, sender: str = "User", project: str = "default") -> str:
         payload = str(text or "").strip()
@@ -101,3 +102,19 @@ class MemoryAgent:
         # Chroma get() order is insertion order by id, so reverse for newest-first display.
         items.reverse()
         return items
+
+    def clear_all(self) -> int:
+        """Delete and recreate the memory collection. Returns removed entry count."""
+        try:
+            removed = int(self._collection.count())
+        except Exception:
+            removed = 0
+
+        try:
+            self._client.delete_collection(name=self._collection_name)
+        except Exception:
+            # If collection is already missing/corrupt, just recreate it below.
+            pass
+
+        self._collection = self._client.get_or_create_collection(name=self._collection_name)
+        return removed

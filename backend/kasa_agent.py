@@ -52,6 +52,9 @@ class KasaAgent:
         try:
             dev = await Discover.discover_single(ip, **self._discover_auth_kwargs())
             if dev:
+                old_dev = self.devices.get(ip)
+                if old_dev is not None and old_dev is not dev:
+                    await self._disconnect_device(old_dev)
                 await dev.update()
                 self.devices[ip] = dev
                 print(f"[KasaAgent] Loaded known device: {dev.alias} ({ip})")
@@ -70,6 +73,9 @@ class KasaAgent:
         print(f"[KasaAgent] Raw discovery found {len(found_devices)} devices.")
 
         for ip, dev in found_devices.items():
+            old_dev = self.devices.get(ip)
+            if old_dev is not None and old_dev is not dev:
+                await self._disconnect_device(old_dev)
             await dev.update()
             self.devices[ip] = dev
 
@@ -212,6 +218,38 @@ class KasaAgent:
                 print(f"Error setting color for {target}: {e}")
 
         return False
+
+    async def _disconnect_device(self, dev):
+        if dev is None:
+            return
+        try:
+            disconnect_fn = getattr(dev, "disconnect", None)
+            if callable(disconnect_fn):
+                result = disconnect_fn()
+                if asyncio.iscoroutine(result):
+                    await result
+                return
+        except Exception as e:
+            print(f"[KasaAgent] Disconnect warning: {e}")
+
+        # Fallback for older internals if disconnect() is not exposed.
+        try:
+            protocol = getattr(dev, "protocol", None)
+            close_fn = getattr(protocol, "close", None) if protocol is not None else None
+            if callable(close_fn):
+                result = close_fn()
+                if asyncio.iscoroutine(result):
+                    await result
+        except Exception as e:
+            print(f"[KasaAgent] Protocol close warning: {e}")
+
+    async def close(self):
+        for ip, dev in list(self.devices.items()):
+            try:
+                await self._disconnect_device(dev)
+            except Exception as e:
+                print(f"[KasaAgent] Error closing device {ip}: {e}")
+        self.devices.clear()
 
 
 if __name__ == "__main__":

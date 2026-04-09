@@ -133,6 +133,10 @@ const SettingsWindow = ({
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
     const [longTermMemoryEnabled, setLongTermMemoryEnabled] = useState(true);
+    const [clearMemoryBusy, setClearMemoryBusy] = useState(false);
+    const [clearMemoryMessage, setClearMemoryMessage] = useState('');
+    const [showClearMemoryConfirm, setShowClearMemoryConfirm] = useState(false);
+    const [memoryEntryCount, setMemoryEntryCount] = useState(null);
     const [faceSetupPin, setFaceSetupPin] = useState('');
     const [faceSetupPinConfirm, setFaceSetupPinConfirm] = useState('');
     const [faceSetupBusy, setFaceSetupBusy] = useState(false);
@@ -235,9 +239,30 @@ const SettingsWindow = ({
             }
         };
 
+        const handleClearMemoryResult = (result) => {
+            const ok = Boolean(result?.ok);
+            const msg = String(result?.message || '').trim() || (ok ? 'Long-term memory cleared.' : 'Failed to clear long-term memory.');
+            setClearMemoryBusy(false);
+            setClearMemoryMessage(msg);
+            if (ok) {
+                socket.emit('get_long_term_memory_count');
+            }
+        };
+
+        const handleMemoryCountResult = (result) => {
+            const ok = Boolean(result?.ok);
+            if (ok) {
+                const count = Number.parseInt(result?.count, 10);
+                setMemoryEntryCount(Number.isFinite(count) ? count : 0);
+            }
+        };
+
         socket.on('settings', handleSettings);
         socket.on('google_workspace_connection_result', handleGoogleConnectionResult);
         socket.on('face_setup_result', handleFaceSetupResult);
+        socket.on('clear_long_term_memory_result', handleClearMemoryResult);
+        socket.on('long_term_memory_count_result', handleMemoryCountResult);
+        socket.emit('get_long_term_memory_count');
         // Also listen for legacy tool_permissions if needed, but 'settings' covers it
         // socket.on('tool_permissions', handlePermissions); 
 
@@ -245,6 +270,8 @@ const SettingsWindow = ({
             socket.off('settings', handleSettings);
             socket.off('google_workspace_connection_result', handleGoogleConnectionResult);
             socket.off('face_setup_result', handleFaceSetupResult);
+            socket.off('clear_long_term_memory_result', handleClearMemoryResult);
+            socket.off('long_term_memory_count_result', handleMemoryCountResult);
         };
     }, [socket]);
 
@@ -431,6 +458,17 @@ const SettingsWindow = ({
         socket.emit('update_settings', { long_term_memory_enabled: newVal });
     };
 
+    const clearLongTermMemory = () => {
+        setShowClearMemoryConfirm(true);
+    };
+
+    const confirmClearLongTermMemory = () => {
+        setShowClearMemoryConfirm(false);
+        setClearMemoryBusy(true);
+        setClearMemoryMessage('Clearing long-term memory...');
+        socket.emit('clear_long_term_memory');
+    };
+
     const toggleCameraFlip = () => {
         const newVal = !isCameraFlipped;
         setIsCameraFlipped(newVal);
@@ -492,62 +530,6 @@ const SettingsWindow = ({
 
     const renderGeneralTab = () => (
         <div className="space-y-5">
-            <div>
-                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Security</h3>
-                <ToggleRow
-                    label="Face Authentication"
-                    enabled={faceAuthEnabled}
-                    onToggle={toggleFaceAuth}
-                />
-                <div className="mt-3 bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
-                    <div className="text-[10px] text-cyan-500/80 uppercase">Setup Face Recognition</div>
-                    <p className="text-[10px] text-cyan-500/70 mt-1">
-                        Captures one face reference image from your selected webcam and stores a backup unlock PIN.
-                    </p>
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                        <input
-                            type="password"
-                            maxLength={4}
-                            value={faceSetupPin}
-                            onChange={(e) => setFaceSetupPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                            placeholder="4-digit PIN"
-                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                        />
-                        <input
-                            type="password"
-                            maxLength={4}
-                            value={faceSetupPinConfirm}
-                            onChange={(e) => setFaceSetupPinConfirm(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                            placeholder="Confirm PIN"
-                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                        />
-                    </div>
-                    <div className="flex items-center justify-between mt-2 gap-2">
-                        <span className="text-[10px] text-cyan-500/70">
-                            Face: {faceReferenceConfigured ? 'configured' : 'not configured'} | PIN: {backupPinConfigured ? 'configured' : 'not configured'}
-                        </span>
-                        <button
-                            onClick={setupFaceRecognition}
-                            disabled={faceSetupBusy}
-                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
-                        >
-                            {faceSetupBusy ? 'Setting up...' : 'Setup Face + PIN'}
-                        </button>
-                    </div>
-                    {faceSetupMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{faceSetupMessage}</p>}
-                </div>
-                <div className="mt-2">
-                    <ToggleRow
-                        label="Long-Term Memory"
-                        enabled={longTermMemoryEnabled}
-                        onToggle={toggleLongTermMemory}
-                    />
-                </div>
-                <p className="mt-2 text-[10px] text-cyan-500/70">
-                    Enables persistent memory across sessions using local vector storage.
-                </p>
-            </div>
-
             <div>
                 <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Gemini API Key</h3>
                 <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
@@ -645,7 +627,95 @@ const SettingsWindow = ({
                     {weatherMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{weatherMessage}</p>}
                 </div>
             </div>
+        </div>
+    );
 
+    const renderSecurityTab = () => (
+        <div className="space-y-5">
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Authentication</h3>
+                <ToggleRow
+                    label="Face Authentication"
+                    enabled={faceAuthEnabled}
+                    onToggle={toggleFaceAuth}
+                />
+                <div className="mt-3 bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <div className="text-[10px] text-cyan-500/80 uppercase">Setup Face Recognition</div>
+                    <p className="text-[10px] text-cyan-500/70 mt-1">
+                        Captures one face reference image from your selected webcam and stores a backup unlock PIN.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                        <input
+                            type="password"
+                            maxLength={4}
+                            value={faceSetupPin}
+                            onChange={(e) => setFaceSetupPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            placeholder="4-digit PIN"
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                        <input
+                            type="password"
+                            maxLength={4}
+                            value={faceSetupPinConfirm}
+                            onChange={(e) => setFaceSetupPinConfirm(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            placeholder="Confirm PIN"
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                    </div>
+                    <div className="flex items-center justify-between mt-2 gap-2">
+                        <span className="text-[10px] text-cyan-500/70">
+                            Face: {faceReferenceConfigured ? 'configured' : 'not configured'} | PIN: {backupPinConfigured ? 'configured' : 'not configured'}
+                        </span>
+                        <button
+                            onClick={setupFaceRecognition}
+                            disabled={faceSetupBusy}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                        >
+                            {faceSetupBusy ? 'Setting up...' : 'Setup Face + PIN'}
+                        </button>
+                    </div>
+                    {faceSetupMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{faceSetupMessage}</p>}
+                </div>
+            </div>
+
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Long-Term Memory</h3>
+                <ToggleRow
+                    label="Persistent Memory"
+                    enabled={longTermMemoryEnabled}
+                    onToggle={toggleLongTermMemory}
+                />
+                <p className="mt-2 text-[10px] text-cyan-500/70">
+                    Enables persistent memory across sessions using local vector storage.
+                </p>
+            </div>
+
+            <div className="bg-gradient-to-br from-red-900/20 via-gray-900/60 to-black/70 border border-red-900/50 rounded-md p-3">
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <div className="text-[10px] text-red-300/90 uppercase tracking-wider">Danger Zone</div>
+                        <p className="mt-1 text-[10px] text-red-300/70">
+                            Permanently removes all stored long-term memory vectors.
+                        </p>
+                    </div>
+                    <button
+                        onClick={clearLongTermMemory}
+                        disabled={clearMemoryBusy}
+                        className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-red-700/70 hover:bg-red-600 text-white disabled:opacity-50"
+                    >
+                        {clearMemoryBusy ? 'Clearing...' : 'Clear Memory'}
+                    </button>
+                </div>
+                <p className="mt-2 text-[10px] text-red-200/80">
+                    Current entries: {memoryEntryCount === null ? 'loading...' : memoryEntryCount}
+                </p>
+                {clearMemoryMessage && <p className="mt-2 text-[10px] text-red-200/90">{clearMemoryMessage}</p>}
+            </div>
+        </div>
+    );
+
+    const renderSmartHomeTab = () => (
+        <div className="space-y-5">
             <div>
                 <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">TP-Link / Tapo Account</h3>
                 <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
@@ -682,7 +752,6 @@ const SettingsWindow = ({
                     {tapoMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{tapoMessage}</p>}
                 </div>
             </div>
-
         </div>
     );
 
@@ -847,10 +916,22 @@ const SettingsWindow = ({
                         General
                     </button>
                     <button
+                        onClick={() => setActiveTab('security')}
+                        className={`${TAB_BUTTON} ${activeTab === 'security' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                    >
+                        Security
+                    </button>
+                    <button
                         onClick={() => setActiveTab('devices')}
                         className={`${TAB_BUTTON} ${activeTab === 'devices' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
                     >
                         Devices
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('smart-home')}
+                        className={`${TAB_BUTTON} ${activeTab === 'smart-home' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                    >
+                        Smart Home
                     </button>
                     <button
                         onClick={() => setActiveTab('tools')}
@@ -865,10 +946,48 @@ const SettingsWindow = ({
                     style={{ height: `calc(100% - ${HEADER_HEIGHT + 44}px)` }}
                 >
                     {activeTab === 'general' && renderGeneralTab()}
+                    {activeTab === 'security' && renderSecurityTab()}
                     {activeTab === 'devices' && renderDevicesTab()}
+                    {activeTab === 'smart-home' && renderSmartHomeTab()}
                     {activeTab === 'tools' && renderToolsTab()}
                 </div>
             </div>
+
+            {showClearMemoryConfirm && (
+                <div className="fixed inset-0 z-[72] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-md bg-black/95 border border-red-700/50 rounded-xl shadow-[0_0_35px_rgba(220,38,38,0.2)] overflow-hidden">
+                        <div className="px-4 py-3 border-b border-red-900/60 bg-gradient-to-r from-red-950/70 via-black/50 to-black/40">
+                            <h3 className="text-red-200 text-sm uppercase tracking-wider">Confirm Memory Wipe</h3>
+                            <p className="text-[10px] text-red-300/75 mt-1">
+                                This action cannot be undone.
+                            </p>
+                        </div>
+                        <div className="p-4">
+                            <p className="text-xs text-red-100/90 leading-relaxed">
+                                You are about to permanently delete all long-term memory entries.
+                            </p>
+                            <p className="mt-2 text-[11px] text-red-200/80">
+                                Entries to remove: {memoryEntryCount === null ? 'loading...' : memoryEntryCount}
+                            </p>
+                            <div className="mt-4 flex justify-end gap-2">
+                                <button
+                                    onClick={() => setShowClearMemoryConfirm(false)}
+                                    className="text-[10px] uppercase tracking-wider px-3 py-1.5 rounded border border-cyan-900/50 bg-black/50 text-cyan-200 hover:border-cyan-600/70"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={confirmClearLongTermMemory}
+                                    disabled={clearMemoryBusy}
+                                    className="text-[10px] uppercase tracking-wider px-3 py-1.5 rounded bg-red-700/85 hover:bg-red-600 text-white disabled:opacity-50"
+                                >
+                                    {clearMemoryBusy ? 'Clearing...' : 'Delete All'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {isFaceSetupPopupOpen && (
                 <div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">

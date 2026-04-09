@@ -34,6 +34,10 @@ from authenticator import FaceAuthenticator
 from kasa_agent import KasaAgent
 from google_calendar_integration import GoogleCalendarIntegration
 from google_gmail_integration import GoogleGmailIntegration
+try:
+    from memory_agent import MemoryAgent
+except Exception:
+    MemoryAgent = None
 
 # Create a Socket.IO server
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
@@ -636,6 +640,13 @@ async def _stop_audio_loop():
         loop_task = None
         await sio.emit('status', {'msg': 'A.D.A Stopped'})
 
+
+async def _close_background_clients():
+    try:
+        await kasa_agent.close()
+    except Exception as e:
+        print(f"[SERVER] Kasa agent close warning: {e}")
+
 @sio.event
 async def pause_audio(sid):
     global audio_loop
@@ -674,17 +685,9 @@ async def shutdown(sid, data=None):
     print("[SERVER] SHUTDOWN SIGNAL RECEIVED FROM FRONTEND")
     print("[SERVER] ========================================")
     
-    # Stop audio loop
-    if audio_loop:
-        print("[SERVER] Stopping Audio Loop...")
-        audio_loop.stop()
-        audio_loop = None
-    
-    # Cancel the loop task if running
-    if loop_task and not loop_task.done():
-        print("[SERVER] Cancelling loop task...")
-        loop_task.cancel()
-        loop_task = None
+    # Stop audio loop and close background clients
+    await _stop_audio_loop()
+    await _close_background_clients()
     
     # Stop authenticator if running
     if authenticator:
@@ -695,6 +698,15 @@ async def shutdown(sid, data=None):
     
     # Force exit immediately - os._exit bypasses cleanup but ensures termination
     os._exit(0)
+
+
+@app.on_event("shutdown")
+async def app_shutdown_event():
+    try:
+        await _stop_audio_loop()
+        await _close_background_clients()
+    except Exception as e:
+        print(f"[SERVER] App shutdown cleanup warning: {e}")
 
 @sio.event
 async def user_input(sid, data):
@@ -1212,6 +1224,59 @@ async def control_home(sid, data):
 @sio.event
 async def get_settings(sid):
     await sio.emit('settings', _settings_for_client())
+
+
+@sio.event
+async def clear_long_term_memory(sid, data=None):
+    project_root = os.path.dirname(BASE_DIR)
+    memory_dir = os.path.join(project_root, "memory", "chroma_db")
+
+    try:
+        removed = 0
+
+        # Prefer clearing the currently active in-memory agent instance if available.
+        if audio_loop and getattr(audio_loop, "memory", None) is not None and hasattr(audio_loop.memory, "clear_all"):
+            removed = int(await asyncio.to_thread(audio_loop.memory.clear_all))
+        else:
+            if MemoryAgent is None:
+                await sio.emit('clear_long_term_memory_result', {'ok': False, 'message': 'Memory backend is not available.'}, room=sid)
+                return
+
+            temp_mem = MemoryAgent(persist_dir=memory_dir)
+            removed = int(await asyncio.to_thread(temp_mem.clear_all))
+
+        await sio.emit(
+            'clear_long_term_memory_result',
+            {
+                'ok': True,
+                'removed': removed,
+                'message': f'Long-term memory cleared. Removed {removed} entries.',
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit('clear_long_term_memory_result', {'ok': False, 'message': f'Failed to clear memory: {str(e)}'}, room=sid)
+
+
+@sio.event
+async def get_long_term_memory_count(sid, data=None):
+    project_root = os.path.dirname(BASE_DIR)
+    memory_dir = os.path.join(project_root, "memory", "chroma_db")
+
+    try:
+        if audio_loop and getattr(audio_loop, "memory", None) is not None and hasattr(audio_loop.memory, "count"):
+            count = int(await asyncio.to_thread(audio_loop.memory.count))
+        else:
+            if MemoryAgent is None:
+                await sio.emit('long_term_memory_count_result', {'ok': False, 'count': 0, 'message': 'Memory backend is not available.'}, room=sid)
+                return
+
+            temp_mem = MemoryAgent(persist_dir=memory_dir)
+            count = int(await asyncio.to_thread(temp_mem.count))
+
+        await sio.emit('long_term_memory_count_result', {'ok': True, 'count': count}, room=sid)
+    except Exception as e:
+        await sio.emit('long_term_memory_count_result', {'ok': False, 'count': 0, 'message': f'Failed to read memory count: {str(e)}'}, room=sid)
 
 
 @sio.event
