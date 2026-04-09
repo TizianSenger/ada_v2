@@ -95,7 +95,11 @@ playwright install chromium
 npm install
 
 # 4. Create .env file
-echo "GEMINI_API_KEY=your_key_here" > .env
+cat > .env <<EOF
+GEMINI_API_KEY=your_key_here
+OPENWEATHER_API_KEY=your_openweather_key_here
+FINNHUB_API_KEY=your_finnhub_key_here
+EOF
 
 # 5. Run!
 conda activate ada_v2 && npm run dev
@@ -223,18 +227,25 @@ ADA uses **OrcaSlicer** (recommended) or PrusaSlicer to generate G-code.
 
 ---
 
-### 6. 🔑 Gemini API Key Setup
-ADA uses Google's Gemini API for voice and intelligence. You need a free API key.
+### 6. 🔑 API Key Setup (.env)
+ADA uses API keys for voice intelligence, weather, and stock data.
 
 1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey).
 2. Sign in with your Google account.
 3. Click **"Create API Key"** and copy the generated key.
 4. Create a file named `.env` in the `ada_v2` folder (same level as `README.md`).
-5. Add this line to the file:
+5. Add these lines to the file:
    ```
    GEMINI_API_KEY=your_api_key_here
+    OPENWEATHER_API_KEY=your_openweather_api_key_here
+    FINNHUB_API_KEY=your_finnhub_api_key_here
    ```
-6. Replace `your_api_key_here` with the key you copied.
+6. Replace the placeholders with your real keys.
+
+Where to get keys:
+- `GEMINI_API_KEY`: Google AI Studio
+- `OPENWEATHER_API_KEY`: OpenWeatherMap
+- `FINNHUB_API_KEY`: Finnhub
 
 > **Note**: Keep this key private! Never commit your `.env` file to Git.
 
@@ -325,6 +336,14 @@ npm run dev
 1. Make sure your `.env` file is in the root `ada_v2` folder (not inside `backend/`).
 2. Verify the format is exactly: `GEMINI_API_KEY=your_key` (no quotes, no spaces).
 3. Restart the backend after editing the file.
+
+### `FINNHUB_API_KEY` missing (Stock tools)
+**Symptoms**: Stock quote/news requests fail or system check shows Finnhub warning.
+
+**Solution**:
+1. Add `FINNHUB_API_KEY=your_key` to your `.env` file.
+2. Restart ADA so the backend reloads environment variables.
+3. Optionally store/update the key in Settings as well.
 
 ---
 

@@ -21,6 +21,8 @@ import LeftToolView from './components/LeftToolView';
 
 const socket = io('http://localhost:8000');
 const { ipcRenderer } = window.require('electron');
+const STOCK_VIEW_QUEUE_MAX = 3;
+const STOCK_VIEW_INTERVAL_MS = 1800;
 
 function App() {
     const [status, setStatus] = useState('Disconnected');
@@ -170,6 +172,9 @@ function App() {
     const lastActiveDragElementRef = useRef(null);
     const lastCursorPosRef = useRef({ x: 0, y: 0 });
     const lastWristPosRef = useRef({ x: 0, y: 0 }); // For stable fist gesture tracking
+    const stockViewQueueRef = useRef([]);
+    const stockViewTimerRef = useRef(null);
+    const stockViewActiveRef = useRef(false);
 
     // Smoothing and Snapping Refs
     const smoothedCursorPosRef = useRef({ x: 0, y: 0 });
@@ -594,7 +599,43 @@ function App() {
         });
 
         socket.on('left_panel_view', (data) => {
-            setLeftPanelView(data || null);
+            const payload = data || null;
+
+            // For non-stock payloads we keep current immediate behavior.
+            if (!payload || payload.type !== 'stock') {
+                stockViewQueueRef.current = [];
+                stockViewActiveRef.current = false;
+                if (stockViewTimerRef.current) {
+                    clearTimeout(stockViewTimerRef.current);
+                    stockViewTimerRef.current = null;
+                }
+                setLeftPanelView(payload);
+                return;
+            }
+
+            // Queue stock cards and present them one-by-one with a soft delay.
+            const queue = stockViewQueueRef.current;
+            if (queue.length >= STOCK_VIEW_QUEUE_MAX) {
+                queue.shift();
+            }
+            queue.push(payload);
+
+            const showNextStockCard = () => {
+                const next = stockViewQueueRef.current.shift();
+                if (!next) {
+                    stockViewActiveRef.current = false;
+                    stockViewTimerRef.current = null;
+                    return;
+                }
+
+                stockViewActiveRef.current = true;
+                setLeftPanelView(next);
+                stockViewTimerRef.current = setTimeout(showNextStockCard, STOCK_VIEW_INTERVAL_MS);
+            };
+
+            if (!stockViewActiveRef.current) {
+                showNextStockCard();
+            }
         });
 
         // Track printer count for toolbar display
@@ -725,6 +766,13 @@ function App() {
             socket.off('quota_status');
             socket.off('error');
             socket.off('left_panel_view');
+
+            if (stockViewTimerRef.current) {
+                clearTimeout(stockViewTimerRef.current);
+                stockViewTimerRef.current = null;
+            }
+            stockViewQueueRef.current = [];
+            stockViewActiveRef.current = false;
 
             stopMicVisualizer();
             stopVideo();

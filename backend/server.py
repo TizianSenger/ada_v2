@@ -103,6 +103,9 @@ DEFAULT_SETTINGS = {
         "get_weather": True,
         "get_weather_forecast": True,
         "get_weather_full_report": True,
+        "search_stock_symbol": True,
+        "get_stock_quote": True,
+        "get_stock_news": True,
         "route_plan": True,
         "clear_detail_view": True,
         "system_check": True,
@@ -129,7 +132,8 @@ DEFAULT_SETTINGS = {
     "tapo_password": "",
     "voice_name": "Kore",
     "camera_flipped": False, # Invert cursor horizontal direction
-    "gemini_api_key": ""
+    "gemini_api_key": "",
+    "finnhub_api_key": ""
 }
 
 SETTINGS = DEFAULT_SETTINGS.copy()
@@ -139,6 +143,8 @@ def _settings_for_client():
     public_settings = dict(SETTINGS)
     api_key = str(public_settings.pop("gemini_api_key", "") or "").strip()
     public_settings["gemini_api_key_configured"] = bool(api_key)
+    finnhub_api_key = str(public_settings.pop("finnhub_api_key", "") or "").strip()
+    public_settings["finnhub_api_key_configured"] = bool(finnhub_api_key)
     tapo_password = str(public_settings.pop("tapo_password", "") or "").strip()
     public_settings["tapo_password_configured"] = bool(tapo_password)
     backup_pin_hash = str(public_settings.pop("backup_pin_hash", "") or "").strip()
@@ -1573,6 +1579,16 @@ async def update_settings(sid, data):
             await sio.emit('status', {'msg': 'Gemini API key saved.'}, room=sid)
         else:
             await sio.emit('error', {'msg': 'API key is empty. Please paste a valid key.'}, room=sid)
+
+    if "finnhub_api_key" in data:
+        new_key = str(data.get("finnhub_api_key", "") or "").strip()
+        if new_key:
+            SETTINGS["finnhub_api_key"] = new_key
+            os.environ["FINNHUB_API_KEY"] = new_key
+            print("[SERVER] Stock API key updated from settings.")
+            await sio.emit('status', {'msg': 'Stock API key saved.'}, room=sid)
+        else:
+            await sio.emit('error', {'msg': 'Stock API key is empty. Please paste a valid key.'}, room=sid)
 
     if "tapo_username" in data or "tapo_password" in data:
         if "tapo_username" in data:

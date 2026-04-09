@@ -318,6 +318,62 @@ _get_weather_full_report_tool = {
     }
 }
 
+_search_stock_symbol_tool = {
+    "name": "search_stock_symbol",
+    "description": "Search stock symbols and company names via Finnhub.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "query": {
+                "type": "STRING",
+                "description": "Company or symbol query, e.g. Apple, Tesla, MSFT."
+            },
+            "limit": {
+                "type": "NUMBER",
+                "description": "Max results (1-20). Optional, defaults to 6."
+            }
+        },
+        "required": ["query"]
+    }
+}
+
+_get_stock_quote_tool = {
+    "name": "get_stock_quote",
+    "description": "Get latest stock quote and company profile for a ticker symbol via Finnhub.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "symbol": {
+                "type": "STRING",
+                "description": "Ticker symbol, e.g. AAPL, TSLA, NVDA, MSFT."
+            }
+        },
+        "required": ["symbol"]
+    }
+}
+
+_get_stock_news_tool = {
+    "name": "get_stock_news",
+    "description": "Get recent stock-related news via Finnhub. If symbol is omitted, returns general market news.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "symbol": {
+                "type": "STRING",
+                "description": "Optional ticker symbol for company-specific news."
+            },
+            "days": {
+                "type": "NUMBER",
+                "description": "For company news, lookback window in days (1-30). Optional, default 7."
+            },
+            "limit": {
+                "type": "NUMBER",
+                "description": "Max news items (1-30). Optional, default 12."
+            }
+        }
+    }
+}
+
 _route_plan_tool = {
     "name": "route_plan",
     "description": "Plan a route for driving by car using free OpenStreetMap services (Nominatim + OSRM) and return data for detail view map display.",
@@ -711,6 +767,9 @@ function_declarations = [
     _get_weather_tool,
     _get_weather_forecast_tool,
     _get_weather_full_report_tool,
+    _search_stock_symbol_tool,
+    _get_stock_quote_tool,
+    _get_stock_news_tool,
     _route_plan_tool,
     _clear_detail_view_tool,
     _system_check_tool,

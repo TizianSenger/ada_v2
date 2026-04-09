@@ -5,6 +5,7 @@ import {
     Mail,
     Route,
     ShieldCheck,
+    LineChart,
     ArrowUp,
     ArrowLeft,
     ArrowRight,
@@ -64,6 +65,7 @@ const ModeHeader = ({ activeMode }) => {
         { id: 'calendar', label: 'Kalender', Icon: CalendarDays },
         { id: 'mail', label: 'Mail', Icon: Mail },
         { id: 'route', label: 'Route', Icon: Route },
+        { id: 'stock', label: 'Stock', Icon: LineChart },
         { id: 'system', label: 'System', Icon: ShieldCheck },
     ];
 
@@ -351,6 +353,160 @@ const RouteView = ({ payload }) => {
     );
 };
 
+const formatNumber = (value, digits = 2) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 'n/a';
+    return num.toFixed(digits);
+};
+
+const formatSigned = (value, digits = 2) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 'n/a';
+    const sign = num > 0 ? '+' : '';
+    return `${sign}${num.toFixed(digits)}`;
+};
+
+const StockSparkline = ({ points = [] }) => {
+    if (!Array.isArray(points) || points.length < 2) {
+        return (
+            <div className="h-32 rounded-lg border border-cyan-900/40 bg-black/30 flex items-center justify-center text-xs text-cyan-400/70">
+                Nicht genug Daten fuer Graph.
+            </div>
+        );
+    }
+
+    const prices = points
+        .map((p) => Number(p?.price))
+        .filter((v) => Number.isFinite(v));
+
+    if (prices.length < 2) {
+        return (
+            <div className="h-32 rounded-lg border border-cyan-900/40 bg-black/30 flex items-center justify-center text-xs text-cyan-400/70">
+                Nicht genug Daten fuer Graph.
+            </div>
+        );
+    }
+
+    const width = 760;
+    const height = 220;
+    const padX = 14;
+    const padY = 14;
+    const minV = Math.min(...prices);
+    const maxV = Math.max(...prices);
+    const spread = Math.max(0.000001, maxV - minV);
+    const usableW = width - (padX * 2);
+    const usableH = height - (padY * 2);
+
+    const toXY = (value, idx) => {
+        const x = padX + (idx / (prices.length - 1)) * usableW;
+        const y = padY + ((maxV - value) / spread) * usableH;
+        return [x, y];
+    };
+
+    const coords = prices.map((v, i) => toXY(v, i));
+    const linePath = coords
+        .map((xy, idx) => `${idx === 0 ? 'M' : 'L'} ${xy[0].toFixed(2)} ${xy[1].toFixed(2)}`)
+        .join(' ');
+    const areaPath = `${linePath} L ${(padX + usableW).toFixed(2)} ${(padY + usableH).toFixed(2)} L ${padX.toFixed(2)} ${(padY + usableH).toFixed(2)} Z`;
+
+    const first = prices[0];
+    const last = prices[prices.length - 1];
+    const up = last >= first;
+
+    return (
+        <div className="rounded-lg border border-cyan-900/40 bg-gradient-to-b from-cyan-950/20 to-black/35 p-2">
+            <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-32" role="img" aria-label="Stock Price Chart">
+                <defs>
+                    <linearGradient id="stockAreaGrad" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor={up ? '#34d399' : '#f87171'} stopOpacity="0.35" />
+                        <stop offset="100%" stopColor={up ? '#34d399' : '#f87171'} stopOpacity="0.03" />
+                    </linearGradient>
+                </defs>
+
+                <path d={areaPath} fill="url(#stockAreaGrad)" />
+                <path d={linePath} fill="none" stroke={up ? '#34d399' : '#f87171'} strokeWidth="3" strokeLinecap="round" />
+                <circle cx={coords[coords.length - 1][0]} cy={coords[coords.length - 1][1]} r="4" fill={up ? '#34d399' : '#f87171'} />
+            </svg>
+        </div>
+    );
+};
+
+const StockView = ({ payload }) => {
+    const stock = payload?.stock || null;
+    const quote = stock?.quote || {};
+    const chart = stock?.chart || {};
+    const chartPoints = Array.isArray(chart?.points) ? chart.points : [];
+    const newsPayload = payload?.news || {};
+    const newsItems = Array.isArray(newsPayload?.news) ? newsPayload.news : [];
+
+    return (
+        <div className="h-full w-full flex flex-col overflow-hidden">
+            <div className="px-3 py-2 border-b border-cyan-900/40 bg-black/30">
+                <div className="text-cyan-300 text-xs uppercase tracking-wider font-bold">{payload?.title || 'Stock Detail'}</div>
+                {stock && (
+                    <>
+                        <div className="text-cyan-100 text-base mt-1 font-semibold">
+                            {stock?.name || stock?.symbol} ({stock?.symbol || '-'})
+                        </div>
+                        <div className="text-cyan-100/80 text-xs mt-1">
+                            {stock?.exchange || '-'} | {stock?.currency || '-'}
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {stock && (
+                <div className="px-3 py-2 border-b border-cyan-900/30 bg-black/20 grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="border border-cyan-700/40 rounded p-2 text-cyan-100">Preis: {formatNumber(quote?.current)}</div>
+                    <div className="border border-cyan-700/40 rounded p-2 text-cyan-100">Aend.: {formatSigned(quote?.change)} ({formatSigned(quote?.percent_change)}%)</div>
+                    <div className="border border-cyan-700/40 rounded p-2 text-cyan-100">High: {formatNumber(quote?.high)}</div>
+                    <div className="border border-cyan-700/40 rounded p-2 text-cyan-100">Low: {formatNumber(quote?.low)}</div>
+                </div>
+            )}
+
+            {stock && (
+                <div className="px-3 py-2 border-b border-cyan-900/30 bg-black/15">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="text-cyan-300 text-[11px] uppercase tracking-wider font-semibold">Kursverlauf</div>
+                        <div className="text-cyan-500/80 text-[10px] uppercase tracking-wider">
+                            {chart?.range || 'range n/a'} | {chart?.resolution || 'res n/a'}
+                        </div>
+                    </div>
+                    <StockSparkline points={chartPoints} />
+                </div>
+            )}
+
+            <div className="flex-1 overflow-auto scrollbar-hide p-3 space-y-2">
+                <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">News</div>
+                {newsItems.length === 0 && (
+                    <div className="text-xs text-cyan-400/70">Keine News im aktuellen Datensatz.</div>
+                )}
+                {newsItems.map((item, idx) => (
+                    <div key={`${idx}-${item.headline || ''}`} className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="text-cyan-100/90 text-xs font-semibold">{item.headline || 'Ohne Titel'}</div>
+                        <div className="text-[11px] text-cyan-400/80 mt-1">
+                            {(item.source || 'Unbekannte Quelle')} | {formatTime(item.datetime_iso || item.datetime_unix)}
+                        </div>
+                        {item.summary && (
+                            <div className="text-[11px] text-cyan-200/80 mt-1 line-clamp-4">{item.summary}</div>
+                        )}
+                        {item.url && (
+                            <a
+                                href={item.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-block mt-2 text-[11px] text-cyan-300 underline"
+                            >
+                                Quelle oeffnen
+                            </a>
+                        )}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 const SystemCheckView = ({ payload }) => {
     const report = payload?.report || {};
     const summary = report?.summary || {};
@@ -440,6 +596,7 @@ const LeftToolView = ({ payload }) => {
         if (payload.type === 'calendar') return 'calendar';
         if (payload.type === 'email' || payload.type === 'email_list') return 'mail';
         if (payload.type === 'route') return 'route';
+        if (payload.type === 'stock') return 'stock';
         if (payload.type === 'system_check') return 'system';
         return 'none';
     }, [payload]);
@@ -454,6 +611,7 @@ const LeftToolView = ({ payload }) => {
     if (payload?.type === 'email') content = <EmailView payload={payload} />;
     if (payload?.type === 'email_list') content = <EmailListView payload={payload} />;
     if (payload?.type === 'route') content = <RouteView payload={payload} />;
+    if (payload?.type === 'stock') content = <StockView payload={payload} />;
     if (payload?.type === 'system_check') content = <SystemCheckView payload={payload} />;
     if (payload?.type === 'clear') content = <EmptyState />;
 

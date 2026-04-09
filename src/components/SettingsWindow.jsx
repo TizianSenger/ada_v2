@@ -19,6 +19,9 @@ const TOOLS = [
     { id: 'get_weather', label: 'Get Weather' },
     { id: 'get_weather_forecast', label: 'Get Weather Forecast' },
     { id: 'get_weather_full_report', label: 'Get Weather Full Report' },
+    { id: 'search_stock_symbol', label: 'Search Stock Symbol' },
+    { id: 'get_stock_quote', label: 'Get Stock Quote' },
+    { id: 'get_stock_news', label: 'Get Stock News' },
     { id: 'route_plan', label: 'Route Plan (Free)' },
     { id: 'clear_detail_view', label: 'Clear Detail View' },
     { id: 'system_check', label: 'System Check' },
@@ -90,6 +93,11 @@ const TOOL_GROUPS = {
         'save_to_memory',
         'memory_status',
     ],
+    Finance: [
+        'search_stock_symbol',
+        'get_stock_quote',
+        'get_stock_news',
+    ],
 };
 
 const TAB_BUTTON = 'px-3 py-1.5 text-xs rounded-md border transition-colors';
@@ -148,6 +156,9 @@ const SettingsWindow = ({
     const [apiKeyInput, setApiKeyInput] = useState('');
     const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
     const [apiKeyMessage, setApiKeyMessage] = useState('');
+    const [finnhubApiKeyInput, setFinnhubApiKeyInput] = useState('');
+    const [finnhubApiKeyConfigured, setFinnhubApiKeyConfigured] = useState(false);
+    const [finnhubApiKeyMessage, setFinnhubApiKeyMessage] = useState('');
     const [googleConnectMessage, setGoogleConnectMessage] = useState('');
     const [googleConnecting, setGoogleConnecting] = useState(false);
     const [defaultWeatherLocation, setDefaultWeatherLocation] = useState('Berlin,DE');
@@ -214,6 +225,7 @@ const SettingsWindow = ({
                     setLongTermMemoryEnabled(Boolean(settings.long_term_memory_enabled));
                 }
                 setApiKeyConfigured(Boolean(settings.gemini_api_key_configured));
+                setFinnhubApiKeyConfigured(Boolean(settings.finnhub_api_key_configured));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
                 setVoiceName(settings.voice_name || 'Kore');
                 setTapoUsername(settings.tapo_username || '');
@@ -488,6 +500,19 @@ const SettingsWindow = ({
         setApiKeyMessage('API key saved. Start or restart ADA to use it.');
     };
 
+    const saveFinnhubApiKey = () => {
+        const trimmed = finnhubApiKeyInput.trim();
+        if (!trimmed) {
+            setFinnhubApiKeyMessage('Please enter a valid stock API key.');
+            return;
+        }
+
+        socket.emit('update_settings', { finnhub_api_key: trimmed });
+        setFinnhubApiKeyInput('');
+        setFinnhubApiKeyConfigured(true);
+        setFinnhubApiKeyMessage('Stock API key saved. Stock tools are now available.');
+    };
+
     const connectGoogleWorkspace = (forceReauth = false) => {
         setGoogleConnecting(true);
         setGoogleConnectMessage(
@@ -552,6 +577,31 @@ const SettingsWindow = ({
                         </button>
                     </div>
                     {apiKeyMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{apiKeyMessage}</p>}
+                </div>
+            </div>
+
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Stock API Key (Finnhub / Massive)</h3>
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <input
+                        type="password"
+                        value={finnhubApiKeyInput}
+                        onChange={(e) => setFinnhubApiKeyInput(e.target.value)}
+                        placeholder={finnhubApiKeyConfigured ? 'Key saved (enter new key to replace)' : 'Paste Finnhub or Massive API key'}
+                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                    />
+                    <div className="flex items-center justify-between mt-2">
+                        <span className="text-[10px] text-cyan-500/70">
+                            {finnhubApiKeyConfigured ? 'Stored stock key detected' : 'No stock key stored yet'}
+                        </span>
+                        <button
+                            onClick={saveFinnhubApiKey}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                        >
+                            Save Key
+                        </button>
+                    </div>
+                    {finnhubApiKeyMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{finnhubApiKeyMessage}</p>}
                 </div>
             </div>
 

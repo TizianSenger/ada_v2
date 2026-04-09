@@ -21,7 +21,7 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 }
 
 if (-not (Test-Path '.env')) {
-    Set-Content -Path '.env' -Value "GEMINI_API_KEY=your_api_key_here`n" -Encoding UTF8
+    Set-Content -Path '.env' -Value "GEMINI_API_KEY=your_api_key_here`nOPENWEATHER_API_KEY=`nFINNHUB_API_KEY=`n" -Encoding UTF8
     Write-Host '[ERROR] .env wurde erstellt. Bitte trage deinen GEMINI_API_KEY ein und starte erneut.' -ForegroundColor Red
     exit 1
 }
@@ -35,6 +35,16 @@ if ($envContent -notmatch 'GEMINI_API_KEY\s*=') {
 if ($envContent -match 'your_api_key_here') {
     Write-Host '[ERROR] Bitte ersetze den Platzhalter in .env durch deinen echten GEMINI_API_KEY.' -ForegroundColor Red
     exit 1
+}
+
+if ($envContent -notmatch 'OPENWEATHER_API_KEY\s*=') {
+    Add-Content -Path '.env' -Value "`nOPENWEATHER_API_KEY="
+    Write-Host '[INFO] OPENWEATHER_API_KEY wurde zu .env hinzugefuegt (optional).' -ForegroundColor Cyan
+}
+
+if ($envContent -notmatch 'FINNHUB_API_KEY\s*=') {
+    Add-Content -Path '.env' -Value "`nFINNHUB_API_KEY="
+    Write-Host '[INFO] FINNHUB_API_KEY wurde zu .env hinzugefuegt (optional).' -ForegroundColor Cyan
 }
 
 if (-not (Test-Path 'node_modules')) {

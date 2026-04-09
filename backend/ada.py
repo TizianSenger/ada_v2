@@ -192,6 +192,7 @@ from google_calendar_integration import GoogleCalendarIntegration
 from google_gmail_integration import GoogleGmailIntegration
 from weather_agent import WeatherAgent
 from route_agent import RouteAgent
+from finnhub_agent import FinnhubAgent
 try:
     from memory_agent import MemoryAgent
     _MEMORY_AVAILABLE = True
@@ -254,6 +255,7 @@ class AudioLoop:
         self.google_calendar = GoogleCalendarIntegration(token_path=GOOGLE_TOKEN_FILE)
         self.google_gmail = GoogleGmailIntegration(token_path=GOOGLE_TOKEN_FILE)
         self.weather_agent = WeatherAgent(settings_path=SETTINGS_FILE)
+        self.finnhub_agent = FinnhubAgent(settings_path=SETTINGS_FILE)
         self.route_agent = RouteAgent()
 
         self.send_text_task = None
@@ -466,6 +468,7 @@ class AudioLoop:
                 "Smart Home Discovery",
                 "Printer Discovery",
                 "Weather API",
+                "Stock Market API",
                 "Route Service",
                 "Google Calendar",
                 "Gmail",
@@ -686,6 +689,25 @@ class AudioLoop:
                 )
             except Exception as e:
                 add_check("Weather API", "fail", f"Weather check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            # Stock market API probe (Finnhub/Massive)
+            t0 = time.time()
+            try:
+                quote = await asyncio.to_thread(self.finnhub_agent.get_stock_quote, "AAPL")
+                add_check(
+                    "Stock Market API",
+                    "pass",
+                    f"Stock API ok for {quote.get('symbol', 'AAPL')}.",
+                    {
+                        "symbol": quote.get("symbol"),
+                        "price": (quote.get("quote") or {}).get("current"),
+                    },
+                    (time.time() - t0) * 1000,
+                )
+            except Exception as e:
+                msg = str(e)
+                status = "warn" if "FINNHUB_API_KEY fehlt" in msg else "fail"
+                add_check("Stock Market API", status, f"Stock API check failed: {msg}", duration_ms=(time.time() - t0) * 1000)
 
             # Route service probe
             t0 = time.time()
@@ -1884,6 +1906,109 @@ class AudioLoop:
                                             "Full weather report konnte nicht abgerufen werden. "
                                             f"Details: {str(e)}"
                                         )
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "search_stock_symbol":
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    limit = int(fc.args.get("limit", 6) or 6)
+
+                                    try:
+                                        result = await asyncio.to_thread(
+                                            self.finnhub_agent.search_symbol,
+                                            query,
+                                            limit,
+                                        )
+                                        matches = result.get("results", []) or []
+                                        if not matches:
+                                            result_str = f"Keine passenden Symbole fuer '{query}' gefunden."
+                                        else:
+                                            lines = []
+                                            for item in matches:
+                                                lines.append(
+                                                    f"- {item.get('symbol', '')}: {item.get('description', '')} ({item.get('type', '')})"
+                                                )
+                                            result_str = "Gefundene Symbole:\n" + "\n".join(lines)
+                                    except Exception as e:
+                                        result_str = f"Aktiensymbol-Suche fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "get_stock_quote":
+                                    symbol = str(fc.args.get("symbol", "") or "").strip().upper()
+
+                                    try:
+                                        stock = await asyncio.to_thread(
+                                            self.finnhub_agent.get_stock_quote,
+                                            symbol,
+                                        )
+                                        self.emit_tool_view({
+                                            "type": "stock",
+                                            "title": f"Stock: {stock.get('symbol', symbol)}",
+                                            "stock": stock,
+                                        })
+
+                                        quote = stock.get("quote", {}) or {}
+                                        company = stock.get("name") or stock.get("symbol") or symbol
+                                        result_str = (
+                                            f"{company} ({stock.get('symbol', symbol)}): "
+                                            f"{quote.get('current', 'n/a')} {stock.get('currency', '')}. "
+                                            f"Aenderung {quote.get('change', 'n/a')} "
+                                            f"({quote.get('percent_change', 'n/a')}%). "
+                                            f"Tageshoch {quote.get('high', 'n/a')}, Tagestief {quote.get('low', 'n/a')}."
+                                        )
+                                    except Exception as e:
+                                        result_str = f"Aktienkurs konnte nicht geladen werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "get_stock_news":
+                                    symbol = str(fc.args.get("symbol", "") or "").strip().upper()
+                                    days = int(fc.args.get("days", 7) or 7)
+                                    limit = int(fc.args.get("limit", 12) or 12)
+
+                                    try:
+                                        news_result = await asyncio.to_thread(
+                                            self.finnhub_agent.get_stock_news,
+                                            symbol,
+                                            days,
+                                            limit,
+                                        )
+                                        title_suffix = symbol if symbol else "Market"
+                                        self.emit_tool_view({
+                                            "type": "stock",
+                                            "title": f"Stock News: {title_suffix}",
+                                            "news": news_result,
+                                        })
+
+                                        news_items = news_result.get("news", []) or []
+                                        if not news_items:
+                                            result_str = "Keine relevanten News gefunden."
+                                        else:
+                                            lines = []
+                                            for item in news_items[:8]:
+                                                lines.append(
+                                                    f"- {item.get('headline', 'Ohne Titel')} ({item.get('source', 'Quelle unbekannt')})"
+                                                )
+                                            scope = news_result.get("scope") or (symbol or "market")
+                                            result_str = f"Aktuelle News ({scope}):\n" + "\n".join(lines)
+                                    except Exception as e:
+                                        result_str = f"Stock-News konnten nicht geladen werden. Details: {str(e)}"
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,
