@@ -310,6 +310,61 @@ class AudioLoop:
         started_ts = time.time()
         checks = []
 
+        planned_checks = [
+            "Model Session",
+            "Project Storage",
+            "Smart Home Cache",
+        ]
+        if include_network_checks:
+            planned_checks.extend([
+                "Smart Home Discovery",
+                "Printer Discovery",
+                "Weather API",
+                "Route Service",
+                "Google Calendar",
+                "Gmail",
+            ])
+        else:
+            planned_checks.append("Network Checks")
+
+        total_checks = len(planned_checks)
+
+        def build_summary(running=True):
+            passed = len([c for c in checks if c["status"] == "pass"])
+            failed = len([c for c in checks if c["status"] == "fail"])
+            warned = len([c for c in checks if c["status"] == "warn"])
+            completed = len(checks)
+            progress_percent = int((completed / total_checks) * 100) if total_checks else 0
+            return {
+                "passed": passed,
+                "failed": failed,
+                "warned": warned,
+                "completed": completed,
+                "total": total_checks,
+                "duration_ms": int((time.time() - started_ts) * 1000),
+                "timestamp": datetime.datetime.now().astimezone().isoformat(),
+                "running": bool(running),
+                "progress_percent": progress_percent,
+            }
+
+        def emit_progress(current_check=None, running=True):
+            summary = build_summary(running=running)
+            self.emit_tool_view({
+                "type": "system_check",
+                "title": "System Check Report" if not running else "System Check Running",
+                "status": "completed" if not running else "running",
+                "progress": {
+                    "completed": summary.get("completed", 0),
+                    "total": summary.get("total", 0),
+                    "percent": summary.get("progress_percent", 0),
+                    "current_check": str(current_check or ""),
+                },
+                "report": {
+                    "summary": summary,
+                    "checks": list(checks),
+                },
+            })
+
         def add_check(name, status, message, details=None, duration_ms=0):
             item = {
                 "name": name,
@@ -320,6 +375,9 @@ class AudioLoop:
             if details is not None:
                 item["details"] = details
             checks.append(item)
+            emit_progress(current_check=name, running=True)
+
+        emit_progress(current_check="Initialisierung", running=True)
 
         # Core: session health
         t0 = time.time()
@@ -466,20 +524,10 @@ class AudioLoop:
         else:
             add_check("Network Checks", "warn", "Network checks skipped by request.", duration_ms=0)
 
-        passed = len([c for c in checks if c["status"] == "pass"])
-        failed = len([c for c in checks if c["status"] == "fail"])
-        warned = len([c for c in checks if c["status"] == "warn"])
-        total = len(checks)
-        duration_ms = int((time.time() - started_ts) * 1000)
+        summary = build_summary(running=False)
 
-        summary = {
-            "passed": passed,
-            "failed": failed,
-            "warned": warned,
-            "total": total,
-            "duration_ms": duration_ms,
-            "timestamp": datetime.datetime.now().astimezone().isoformat(),
-        }
+        # Emit one final state so the frontend can switch from running -> completed.
+        emit_progress(current_check="Abgeschlossen", running=False)
 
         return {
             "summary": summary,
@@ -1699,12 +1747,6 @@ class AudioLoop:
                                     report = await self.run_system_check(include_network_checks=include_network_checks)
                                     summary = report.get("summary", {})
                                     checks = report.get("checks", [])
-
-                                    self.emit_tool_view({
-                                        "type": "system_check",
-                                        "title": "System Check Report",
-                                        "report": report,
-                                    })
 
                                     if self.on_device_update:
                                         self.on_device_update(self.kasa_agent.get_devices_list())

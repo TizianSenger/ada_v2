@@ -355,6 +355,18 @@ const SystemCheckView = ({ payload }) => {
     const report = payload?.report || {};
     const summary = report?.summary || {};
     const checks = Array.isArray(report?.checks) ? report.checks : [];
+    const progress = payload?.progress || {};
+    const isRunning = payload?.status === 'running' || summary?.running === true;
+
+    const totalChecksRaw = progress?.total ?? summary?.total ?? checks.length;
+    const completedChecksRaw = progress?.completed ?? summary?.completed ?? checks.length;
+    const progressPercentRaw = progress?.percent ?? summary?.progress_percent;
+
+    const totalChecks = Number.isFinite(Number(totalChecksRaw)) ? Number(totalChecksRaw) : checks.length;
+    const completedChecks = Number.isFinite(Number(completedChecksRaw)) ? Number(completedChecksRaw) : checks.length;
+    const fallbackPercent = totalChecks > 0 ? Math.round((completedChecks / totalChecks) * 100) : 0;
+    const progressPercent = Math.max(0, Math.min(100, Number.isFinite(Number(progressPercentRaw)) ? Number(progressPercentRaw) : fallbackPercent));
+    const currentCheck = String(progress?.current_check || '');
 
     const badgeClass = (status) => {
         if (status === 'pass') return 'text-emerald-300 bg-emerald-500/15 border-emerald-400/40';
@@ -368,6 +380,26 @@ const SystemCheckView = ({ payload }) => {
                 <div className="text-cyan-300 text-xs uppercase tracking-wider font-bold">{payload?.title || 'System Check Report'}</div>
                 <div className="text-cyan-100/75 text-xs mt-1">
                     {summary?.timestamp ? `Zeit: ${formatTime(summary.timestamp)}` : 'Zeit: -'}
+                </div>
+                <div className={`text-[11px] mt-1 ${isRunning ? 'text-cyan-300/95' : 'text-emerald-300/90'}`}>
+                    {isRunning ? 'Diagnose laeuft...' : 'Diagnose abgeschlossen'}
+                </div>
+                {currentCheck && (
+                    <div className="text-[11px] mt-1 text-cyan-400/85 truncate">
+                        Aktueller Check: {currentCheck}
+                    </div>
+                )}
+                <div className="mt-2">
+                    <div className="h-2.5 rounded-full bg-cyan-950/60 border border-cyan-900/60 overflow-hidden">
+                        <div
+                            className="h-full bg-gradient-to-r from-cyan-500 to-emerald-400 transition-all duration-300 ease-out"
+                            style={{ width: `${progressPercent}%` }}
+                        />
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[10px] text-cyan-300/80">
+                        <span>{progressPercent}%</span>
+                        <span>{completedChecks}/{totalChecks} Systeme gecheckt</span>
+                    </div>
                 </div>
             </div>
 
