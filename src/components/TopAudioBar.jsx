@@ -15,26 +15,26 @@ const TopAudioBar = ({ audioData }) => {
 
             const barWidth = 4;
             const gap = 2;
-            const totalBars = Math.floor(width / (barWidth + gap));
-
-            // Simple visualization logic
-            // Assuming audioData is an array of 0-255 values
-            // We mirror it from center
-
             const center = width / 2;
+            const barsPerSide = Math.max(1, Math.floor((width / 2 - gap / 2) / (barWidth + gap)));
 
-            for (let i = 0; i < totalBars / 2; i++) {
+            for (let i = 0; i < barsPerSide; i++) {
                 const value = audioData[i % audioData.length] || 0;
                 const percent = value / 255;
                 const barHeight = Math.max(2, percent * height);
 
                 ctx.fillStyle = `rgba(34, 211, 238, ${0.2 + percent * 0.8})`; // Cyan with opacity
 
+                const offset = gap / 2 + i * (barWidth + gap);
+                const rightX = center + offset;
+                const leftX = center - offset - barWidth;
+                const y = (height - barHeight) / 2;
+
                 // Right side
-                ctx.fillRect(center + i * (barWidth + gap), (height - barHeight) / 2, barWidth, barHeight);
+                ctx.fillRect(rightX, y, barWidth, barHeight);
 
                 // Left side
-                ctx.fillRect(center - (i + 1) * (barWidth + gap), (height - barHeight) / 2, barWidth, barHeight);
+                ctx.fillRect(leftX, y, barWidth, barHeight);
             }
         };
 

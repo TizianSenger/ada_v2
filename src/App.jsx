@@ -15,7 +15,7 @@ import AuthLock from './components/AuthLock';
 import KasaWindow from './components/KasaWindow';
 import PrinterWindow from './components/PrinterWindow';
 import SettingsWindow from './components/SettingsWindow';
-import LeftToolView from './components/LeftToolView';
+import LeftToolView, { SystemCheckMatrix } from './components/LeftToolView';
 
 
 
@@ -1531,6 +1531,7 @@ function App() {
 
     // Calculate Average Audio Amplitude for Background Pulse
     const audioAmp = aiAudioData.reduce((a, b) => a + b, 0) / aiAudioData.length / 255;
+    const showSystemMatrixOverlay = leftPanelView?.type === 'system_check';
 
     const toggleKasaWindow = () => {
         if (!showKasaWindow) {
@@ -1610,8 +1611,8 @@ function App() {
             />
 
             {/* Top Bar (Draggable) */}
-            <div className="z-50 flex items-center justify-between p-2 border-b border-cyan-500/20 bg-black/40 backdrop-blur-md select-none sticky top-0" style={{ WebkitAppRegion: 'drag' }}>
-                <div className="flex items-center gap-4 pl-2">
+            <div className="z-50 relative flex items-center justify-between p-2 border-b border-cyan-500/20 bg-black/40 backdrop-blur-md select-none sticky top-0" style={{ WebkitAppRegion: 'drag' }}>
+                <div className="relative z-10 flex items-center gap-4 pl-2">
                     <h1 className="text-xl font-bold tracking-[0.2em] text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]">
                         A.D.A
                     </h1>
@@ -1641,11 +1642,11 @@ function App() {
                 </div>
 
                 {/* Top Visualizer (User Mic) */}
-                <div className="flex-1 flex justify-center mx-4">
+                <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] flex justify-center">
                     <TopAudioBar audioData={micAudioData} />
                 </div>
 
-                <div className="flex items-center gap-2 pr-2" style={{ WebkitAppRegion: 'no-drag' }}>
+                <div className="relative z-10 flex items-center gap-2 pr-2" style={{ WebkitAppRegion: 'no-drag' }}>
                     {/* Live Clock */}
                     <div className="flex items-center gap-1.5 text-[11px] text-cyan-300/70 font-mono px-2">
                         <Clock size={12} className="text-cyan-500/50" />
@@ -1668,7 +1669,7 @@ function App() {
                 {/* Left Companion Box (same size/style as central ADA box) */}
                 <div
                     id="visualizer-left"
-                    className="absolute flex items-center justify-center transition-all duration-200
+                    className="absolute flex items-center justify-center transition-all duration-200 animate-shimmer-border
                         backdrop-blur-xl bg-black/30 border border-white/10 shadow-2xl overflow-hidden rounded-2xl pointer-events-auto"
                     style={{
                         left: detailViewCenterX,
@@ -1680,7 +1681,7 @@ function App() {
                 >
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10"></div>
                     <div className="relative z-20 w-full h-full">
-                        <LeftToolView payload={leftPanelView} onClear={handleClearDetailView} />
+                        <LeftToolView payload={leftPanelView} onClear={handleClearDetailView} variant={showSystemMatrixOverlay ? 'system-no-mesh' : 'default'} />
                     </div>
                 </div>
 
@@ -1701,14 +1702,22 @@ function App() {
                     onMouseDown={(e) => handleMouseDown(e, 'visualizer')}
                 >
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10"></div>
-                    <div className="relative z-20">
-                        <Visualizer
-                            audioData={aiAudioData}
-                            isListening={isConnected && !isMuted}
-                            intensity={audioAmp}
-                            width={elementSizes.visualizer.w}
-                            height={elementSizes.visualizer.h}
-                        />
+                    <div className="relative z-20 w-full h-full">
+                        {!showSystemMatrixOverlay && (
+                            <Visualizer
+                                audioData={aiAudioData}
+                                isListening={isConnected && !isMuted}
+                                intensity={audioAmp}
+                                width={elementSizes.visualizer.w}
+                                height={elementSizes.visualizer.h}
+                                showLogo={!showSystemMatrixOverlay}
+                            />
+                        )}
+                        {showSystemMatrixOverlay && (
+                            <div className="absolute inset-4 z-30 pointer-events-auto">
+                                <SystemCheckMatrix payload={leftPanelView} variant="hero" />
+                            </div>
+                        )}
                     </div>
                     {isModularMode && <div className={`absolute top-2 right-2 text-xs font-bold tracking-widest z-20 ${activeDragElement === 'visualizer' ? 'text-green-500' : 'text-yellow-500/50'}`}>VISUALIZER</div>}
                 </div>

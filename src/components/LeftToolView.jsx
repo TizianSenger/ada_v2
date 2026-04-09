@@ -3,8 +3,15 @@ import {
     CloudSun,
     CalendarDays,
     Mail,
+    Printer,
+    Lightbulb,
+    Gauge,
     Route,
     ShieldCheck,
+    Cpu,
+    Database,
+    Wifi,
+    Server,
     LineChart,
     ArrowUp,
     ArrowLeft,
@@ -508,7 +515,7 @@ const StockView = ({ payload }) => {
     );
 };
 
-const SystemCheckView = ({ payload }) => {
+const SystemCheckView = ({ payload, variant = 'default', meshOnly = false, showMesh = true }) => {
     const report = payload?.report || {};
     const summary = report?.summary || {};
     const checks = Array.isArray(report?.checks) ? report.checks : [];
@@ -530,6 +537,213 @@ const SystemCheckView = ({ payload }) => {
         if (status === 'warn') return 'text-amber-300 bg-amber-500/15 border-amber-400/40';
         return 'text-red-300 bg-red-500/15 border-red-400/40';
     };
+
+    const normalizeStatus = (status, idx) => {
+        const known = ['pass', 'warn', 'fail'];
+        if (known.includes(status)) return status;
+        if (isRunning && idx >= completedChecks) return 'pending';
+        return 'warn';
+    };
+
+    const statusDotClass = (status) => {
+        if (status === 'warn') return 'bg-amber-300/80 shadow-[0_0_6px_rgba(251,191,36,0.45)]';
+        if (status === 'fail') return 'bg-red-300/85 shadow-[0_0_6px_rgba(248,113,113,0.5)]';
+        return 'bg-cyan-400/70 shadow-[0_0_10px_rgba(34,211,238,0.6)]';
+    };
+
+    const statusIconClass = (status) => {
+        if (status === 'warn') return 'text-amber-300';
+        if (status === 'fail') return 'text-red-300';
+        if (status === 'pass') return 'text-emerald-300';
+        return 'text-cyan-100/90';
+    };
+
+    const nodeIcon = (name) => {
+        const text = String(name || '').toLowerCase();
+
+        // Core checks
+        if (text.includes('model') || text.includes('session')) return Cpu;
+        if (text.includes('project') || text.includes('storage')) return Database;
+        if (text.includes('long-term memory') || text === 'memory' || text.includes('memory')) return Database;
+
+        // Smart home
+        if (text.includes('smart home cache')) return Lightbulb;
+        if (text.includes('smart home discovery')) return Wifi;
+
+        // External services
+        if (text.includes('printer')) return Printer;
+        if (text.includes('weather')) return CloudSun;
+        if (text.includes('stock')) return LineChart;
+        if (text.includes('route')) return Route;
+        if (text.includes('google calendar') || text.includes('calendar')) return CalendarDays;
+        if (text.includes('gmail') || text.includes('mail')) return Mail;
+        if (text.includes('network checks')) return Gauge;
+
+        // Generic cloud/integration fallback
+        if (text.includes('google') || text.includes('api') || text.includes('service')) return Server;
+        return ShieldCheck;
+    };
+
+    const isHero = variant === 'hero';
+
+    const visibleChecks = checks;
+    const nodeCount = Math.max(visibleChecks.length, 1);
+    const orbitRadiusX = isHero ? 41 : 40;
+    const orbitRadiusY = isHero ? 36 : 34;
+
+    const nodes = visibleChecks.map((check, idx) => {
+        const angle = (-Math.PI / 2) + ((idx / nodeCount) * Math.PI * 2);
+        const pos = {
+            x: 50 + (Math.cos(angle) * orbitRadiusX),
+            y: 50 + (Math.sin(angle) * orbitRadiusY),
+        };
+        return {
+            id: `${check?.name || 'check'}-${idx}`,
+            name: check?.name || `Check ${idx + 1}`,
+            status: normalizeStatus(check?.status, idx),
+            message: check?.message || '-',
+            x: pos.x,
+            y: pos.y,
+            Icon: nodeIcon(check?.name),
+            delay: idx * 0.16,
+        };
+    });
+
+    const coreNode = {
+        x: 50,
+        y: 50,
+        id: 'core',
+    };
+
+    const ringLinks = nodes.map((node, idx) => {
+        const next = nodes[(idx + 1) % nodes.length];
+        return {
+            id: `${node.id}-ring-${idx}`,
+            from: node,
+            to: next,
+            status: node.status,
+        };
+    });
+
+    const statusLinks = nodes
+        .filter((node) => node.status === 'warn' || node.status === 'fail')
+        .map((node, idx) => ({
+            id: `${node.id}-status-${idx}`,
+            from: node,
+            to: coreNode,
+            status: node.status,
+        }));
+
+    const linkStrokeClass = (status) => {
+        if (status === 'pass') return 'stroke-emerald-400/45';
+        if (status === 'warn') return 'stroke-amber-400/45';
+        if (status === 'fail') return 'stroke-red-400/45';
+        return 'stroke-cyan-400/35';
+    };
+
+    const meshSection = (
+        <div className="px-3 py-3 border-b border-cyan-900/30 bg-gradient-to-b from-cyan-950/20 to-black/25 overflow-hidden">
+            <div className="text-cyan-300 text-[11px] uppercase tracking-wider font-semibold mb-2">System Mesh</div>
+            <div className={`relative ${isHero ? 'h-64' : 'h-52'} rounded-xl border border-cyan-900/40 bg-black/40 overflow-hidden animate-shimmer-border`}>
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(34,211,238,0.12),transparent_45%),radial-gradient(circle_at_78%_70%,rgba(20,184,166,0.12),transparent_42%)]" />
+
+                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="System Check Network Graph">
+                    {ringLinks.map((link, idx) => (
+                        <line
+                            key={link.id}
+                            x1={link.from.x}
+                            y1={link.from.y}
+                            x2={link.to.x}
+                            y2={link.to.y}
+                            className="stroke-cyan-500/30 animate-data-flow"
+                            strokeWidth="0.35"
+                            strokeDasharray="1.8 1.4"
+                            style={{ animationDelay: `${idx * 0.09}s` }}
+                        />
+                    ))}
+                    {statusLinks.map((link, idx) => (
+                        <line
+                            key={link.id}
+                            x1={link.from.x}
+                            y1={link.from.y}
+                            x2={link.to.x}
+                            y2={link.to.y}
+                            className={`${linkStrokeClass(link.status)} animate-data-flow`}
+                            strokeWidth="0.45"
+                            strokeDasharray="2.2 1.4"
+                            style={{ animationDelay: `${idx * 0.14}s` }}
+                        />
+                    ))}
+                    {nodes.map((node, idx) => {
+                        if (node.status === 'warn' || node.status === 'fail') {
+                            return null;
+                        }
+                        return (
+                            <line
+                                key={`${node.id}-core`}
+                                x1={coreNode.x}
+                                y1={coreNode.y}
+                                x2={node.x}
+                                y2={node.y}
+                                className="stroke-cyan-500/20 animate-data-flow"
+                                strokeWidth="0.35"
+                                strokeDasharray="1.5 1.2"
+                                style={{ animationDelay: `${idx * 0.11}s` }}
+                            />
+                        );
+                    })}
+                </svg>
+
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                    <div className={`relative ${isHero ? 'w-14 h-14' : 'w-10 h-10'} rounded-full flex items-center justify-center`}>
+                        <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" aria-hidden="true">
+                            <circle cx="50" cy="50" r="44" fill="rgba(34,211,238,0.08)" stroke="rgba(103,232,249,0.75)" strokeWidth="4" />
+                            <circle cx="50" cy="50" r="31" fill="none" stroke="rgba(34,211,238,0.5)" strokeWidth="2" />
+                        </svg>
+                        <div className="absolute inset-0 rounded-full animate-node-pulse" />
+                        <ShieldCheck size={isHero ? 18 : 16} className="text-cyan-200 relative z-10" />
+                    </div>
+                </div>
+
+                {nodes.map((node) => {
+                    const Icon = node.Icon;
+                    return (
+                        <div
+                            key={node.id}
+                            className="absolute z-20"
+                            style={{
+                                left: `${node.x}%`,
+                                top: `${node.y}%`,
+                                transform: 'translate(-50%, -50%)',
+                                animationDelay: `${node.delay}s`,
+                            }}
+                        >
+                            <div className="relative group animate-float-node">
+                                <div className={`${isHero ? 'w-9 h-9' : 'w-8 h-8'} rounded-full border border-cyan-700/40 bg-black/70 backdrop-blur flex items-center justify-center transition-all duration-200 group-hover:scale-110 ${node.status === 'pending' ? 'opacity-80' : 'opacity-100'}`}>
+                                    <Icon size={isHero ? 15 : 14} className={statusIconClass(node.status)} />
+                                </div>
+                                {(node.status === 'warn' || node.status === 'fail') && (
+                                    <span className={`absolute -right-0.5 -top-0.5 w-2 h-2 rounded-full ${statusDotClass(node.status)}`} />
+                                )}
+
+                                <div className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded border border-cyan-700/40 bg-black/80 px-2 py-1 text-[10px] text-cyan-200 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                                    {node.name}
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+
+    if (meshOnly) {
+        return (
+            <div className="h-full w-full p-3">
+                {meshSection}
+            </div>
+        );
+    }
 
     return (
         <div className="h-full w-full flex flex-col">
@@ -567,12 +781,18 @@ const SystemCheckView = ({ payload }) => {
                 <div className="border border-cyan-700/40 rounded p-2 text-cyan-200">{summary?.duration_ms ?? 0} ms</div>
             </div>
 
+            {showMesh && meshSection}
+
             <div className="flex-1 overflow-auto scrollbar-hide p-3 space-y-2">
                 {checks.length === 0 && (
                     <div className="text-xs text-cyan-400/70">Keine Check-Daten vorhanden.</div>
                 )}
                 {checks.map((check, idx) => (
-                    <div key={`${check.name || 'check'}-${idx}`} className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div
+                        key={`${check.name || 'check'}-${idx}`}
+                        className="border border-cyan-900/40 rounded-lg p-2 bg-black/35 animate-fade-in-up"
+                        style={{ animationDelay: `${Math.min(idx * 0.05, 0.35)}s` }}
+                    >
                         <div className="flex items-start justify-between gap-2">
                             <div className="text-cyan-100/90 text-xs font-semibold">{check.name || 'Check'}</div>
                             <div className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border ${badgeClass(check.status)}`}>
@@ -588,7 +808,7 @@ const SystemCheckView = ({ payload }) => {
     );
 };
 
-const LeftToolView = ({ payload, onClear }) => {
+const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
     const [fadeKey, setFadeKey] = useState(0);
     const isEmpty = !payload?.type || payload.type === 'clear';
 
@@ -614,7 +834,11 @@ const LeftToolView = ({ payload, onClear }) => {
     if (payload?.type === 'email_list') content = <EmailListView payload={payload} />;
     if (payload?.type === 'route') content = <RouteView payload={payload} />;
     if (payload?.type === 'stock') content = <StockView payload={payload} />;
-    if (payload?.type === 'system_check') content = <SystemCheckView payload={payload} />;
+    if (payload?.type === 'system_check') {
+        const isSystemHero = variant === 'system-hero';
+        const isSystemNoMesh = variant === 'system-no-mesh';
+        content = <SystemCheckView payload={payload} variant={isSystemHero ? 'hero' : 'default'} meshOnly={isSystemHero} showMesh={!isSystemNoMesh} />;
+    }
     if (payload?.type === 'clear') content = <EmptyState />;
 
     return (
@@ -645,3 +869,6 @@ const LeftToolView = ({ payload, onClear }) => {
 };
 
 export default LeftToolView;
+export const SystemCheckMatrix = ({ payload, variant = 'hero' }) => (
+    <SystemCheckView payload={payload} variant={variant} meshOnly />
+);

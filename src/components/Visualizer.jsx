@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 
-const Visualizer = ({ audioData, isListening, intensity = 0, width = 600, height = 400 }) => {
+const Visualizer = ({ audioData, isListening, intensity = 0, width = 600, height = 400, showLogo = true }) => {
     const canvasRef = useRef(null);
 
     // Use a ref for audioData to avoid re-creating the animation loop on every frame
@@ -85,17 +85,18 @@ const Visualizer = ({ audioData, isListening, intensity = 0, width = 600, height
 
     return (
         <div className="relative" style={{ width, height }}>
-            {/* Central Logo/Text */}
-            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                <motion.div
-                    animate={{ scale: isListening ? [1, 1.1, 1] : 1 }}
-                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                    className="text-cyan-100 font-bold tracking-widest drop-shadow-[0_0_15px_rgba(34,211,238,0.8)]"
-                    style={{ fontSize: Math.min(width, height) * 0.1 }}
-                >
-                    A.D.A
-                </motion.div>
-            </div>
+            {showLogo && (
+                <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+                    <motion.div
+                        animate={{ scale: isListening ? [1, 1.1, 1] : 1 }}
+                        transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                        className="text-cyan-100 font-bold tracking-widest drop-shadow-[0_0_15px_rgba(34,211,238,0.8)]"
+                        style={{ fontSize: Math.min(width, height) * 0.1 }}
+                    >
+                        A.D.A
+                    </motion.div>
+                </div>
+            )}
 
             <canvas
                 ref={canvasRef}
