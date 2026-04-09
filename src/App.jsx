@@ -844,6 +844,16 @@ function App() {
         }
     };
 
+    const handleClearDetailView = () => {
+        if (stockViewTimerRef.current) {
+            clearTimeout(stockViewTimerRef.current);
+            stockViewTimerRef.current = null;
+        }
+        stockViewQueueRef.current = [];
+        stockViewActiveRef.current = false;
+        setLeftPanelView({ type: 'clear', title: 'Detail View' });
+    };
+
     const stopMicVisualizer = () => {
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
         if (sourceRef.current) sourceRef.current.disconnect();
@@ -1670,7 +1680,7 @@ function App() {
                 >
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10"></div>
                     <div className="relative z-20 w-full h-full">
-                        <LeftToolView payload={leftPanelView} />
+                        <LeftToolView payload={leftPanelView} onClear={handleClearDetailView} />
                     </div>
                 </div>
 

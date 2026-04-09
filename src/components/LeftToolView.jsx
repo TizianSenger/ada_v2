@@ -12,6 +12,7 @@ import {
     CornerUpLeft,
     CornerUpRight,
     RotateCcw,
+    Trash2,
 } from 'lucide-react';
 import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -587,8 +588,9 @@ const SystemCheckView = ({ payload }) => {
     );
 };
 
-const LeftToolView = ({ payload }) => {
+const LeftToolView = ({ payload, onClear }) => {
     const [fadeKey, setFadeKey] = useState(0);
+    const isEmpty = !payload?.type || payload.type === 'clear';
 
     const mode = useMemo(() => {
         if (!payload?.type || payload.type === 'clear') return 'none';
@@ -619,7 +621,20 @@ const LeftToolView = ({ payload }) => {
         <div className="h-full w-full flex flex-col overflow-hidden">
             <div className="h-9 border-b border-cyan-900/40 bg-black/45 px-3 flex items-center justify-between">
                 <span className="text-cyan-200 text-xs tracking-[0.25em] uppercase font-semibold">Detail View</span>
-                <span className="text-cyan-500/70 text-[10px] uppercase tracking-wider">Live</span>
+                <div className="flex items-center gap-2">
+                    {onClear && (
+                        <button
+                            onClick={onClear}
+                            disabled={isEmpty}
+                            className="h-6 px-2 rounded border border-cyan-800/50 bg-black/40 text-cyan-300/85 hover:border-cyan-500/70 hover:text-cyan-200 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 text-[10px] uppercase tracking-wider"
+                            title="Clear Detail View"
+                        >
+                            <Trash2 size={11} />
+                            Clear
+                        </button>
+                    )}
+                    <span className="text-cyan-500/70 text-[10px] uppercase tracking-wider">Live</span>
+                </div>
             </div>
             <ModeHeader activeMode={mode} />
             <div key={fadeKey} className="flex-1 animate-fade-in overflow-hidden">
