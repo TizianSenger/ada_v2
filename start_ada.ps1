@@ -67,5 +67,13 @@ catch {
 }
 
 Write-Host '[INFO] Starte ADA Dev-Stack (Vite + Electron + Python Backend)...' -ForegroundColor Green
+
+# Prevent stale Python bytecode from loading outdated backend code.
+$env:PYTHONDONTWRITEBYTECODE = '1'
+$env:TQDM_DISABLE = '1'
+if (Test-Path '.\backend\__pycache__') {
+    Get-ChildItem '.\backend\__pycache__\*.pyc' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
 npm run dev
 exit $LASTEXITCODE

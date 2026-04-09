@@ -64,6 +64,8 @@ SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settin
 
 DEFAULT_SETTINGS = {
     "face_auth_enabled": False, # Default OFF as requested
+    "long_term_memory_enabled": True,
+    "memory_locked": False,
     "tool_permissions": {
         "generate_cad": True,
         "iterate_cad": True,
@@ -87,6 +89,9 @@ DEFAULT_SETTINGS = {
         "route_plan": True,
         "clear_detail_view": True,
         "system_check": True,
+        "search_memory": True,
+        "save_to_memory": True,
+        "memory_status": False,
         "list_calendar_events": True,
         "get_calendar_view": True,
         "create_calendar_event": True,
@@ -453,6 +458,10 @@ async def start_audio(sid, data=None):
 
         # Apply current permissions
         audio_loop.update_permissions(SETTINGS["tool_permissions"])
+        if hasattr(audio_loop, "set_long_term_memory_enabled"):
+            audio_loop.set_long_term_memory_enabled(SETTINGS.get("long_term_memory_enabled", True))
+        if hasattr(audio_loop, "set_memory_locked"):
+            audio_loop.set_memory_locked(SETTINGS.get("memory_locked", False))
         
         # Check initial mute state
         if data and data.get('muted', False):
@@ -621,6 +630,21 @@ async def user_input(sid, data):
         # Log User Input to Project History
         if audio_loop and audio_loop.project_manager:
             audio_loop.project_manager.log_chat("User", text)
+            if hasattr(audio_loop, "store_memory_entry"):
+                # First-time memory embedding can trigger model download; do not block user turn.
+                asyncio.create_task(audio_loop.store_memory_entry(text, sender="User"))
+
+        text_for_model = text
+        if hasattr(audio_loop, "prepare_user_text_input"):
+            try:
+                # Keep chat responsive even if memory backend is warming up.
+                text_for_model = await asyncio.wait_for(
+                    audio_loop.prepare_user_text_input(text),
+                    timeout=0.9,
+                )
+            except asyncio.TimeoutError:
+                print("[SERVER DEBUG] Memory enrichment timed out; continuing without memory context.")
+                text_for_model = text
             
         # Use the same 'send' method that worked for audio, as 'send_realtime_input' and 'send_client_content' seem unstable in this env
         # INJECT VIDEO FRAME IF AVAILABLE (VAD-style logic for Text Input)
@@ -632,7 +656,7 @@ async def user_input(sid, data):
             except Exception as e:
                 print(f"[SERVER DEBUG] Failed to send piggyback frame: {e}")
                 
-        await audio_loop.session.send(input=text, end_of_turn=True)
+        await audio_loop.session.send(input=text_for_model, end_of_turn=True)
         print(f"[SERVER DEBUG] Message sent to model successfully.")
 
 import json
@@ -1164,6 +1188,16 @@ async def update_settings(sid, data):
              # Stop auth loop if running?
              if authenticator:
                  authenticator.stop() 
+
+    if "long_term_memory_enabled" in data:
+        SETTINGS["long_term_memory_enabled"] = bool(data.get("long_term_memory_enabled", True))
+        if audio_loop and hasattr(audio_loop, "set_long_term_memory_enabled"):
+            audio_loop.set_long_term_memory_enabled(SETTINGS["long_term_memory_enabled"])
+
+    if "memory_locked" in data:
+        SETTINGS["memory_locked"] = bool(data.get("memory_locked", False))
+        if audio_loop and hasattr(audio_loop, "set_memory_locked"):
+            audio_loop.set_memory_locked(SETTINGS["memory_locked"])
 
     if "camera_flipped" in data:
         SETTINGS["camera_flipped"] = data["camera_flipped"]

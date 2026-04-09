@@ -364,6 +364,49 @@ _system_check_tool = {
     }
 }
 
+_search_memory_tool = {
+    "name": "search_memory",
+    "description": "Search relevant entries in long-term memory for conversation context.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "query": {
+                "type": "STRING",
+                "description": "What to look up in memory."
+            },
+            "n_results": {
+                "type": "NUMBER",
+                "description": "How many memory entries to return (1-10)."
+            }
+        },
+        "required": ["query"]
+    }
+}
+
+_save_to_memory_tool = {
+    "name": "save_to_memory",
+    "description": "Persist important user preferences or facts into long-term memory.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "text": {
+                "type": "STRING",
+                "description": "The memory text to save."
+            }
+        },
+        "required": ["text"]
+    }
+}
+
+_memory_status_tool = {
+    "name": "memory_status",
+    "description": "Get current long-term memory status including enabled/locked state and entry count.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+    }
+}
+
 _list_calendar_events_tool = {
     "name": "list_calendar_events",
     "description": "List upcoming events from the primary Google Calendar.",
@@ -671,6 +714,9 @@ function_declarations = [
     _route_plan_tool,
     _clear_detail_view_tool,
     _system_check_tool,
+    _search_memory_tool,
+    _save_to_memory_tool,
+    _memory_status_tool,
     _list_calendar_events_tool,
     _get_calendar_view_tool,
     _create_calendar_event_tool,

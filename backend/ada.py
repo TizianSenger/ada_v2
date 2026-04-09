@@ -111,6 +111,28 @@ def resolve_default_route_origin():
         return "Berlin,DE"
 
 
+def _read_settings_json():
+    settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+    if not os.path.exists(settings_path):
+        return {}
+
+    try:
+        with open(settings_path, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def resolve_long_term_memory_enabled():
+    data = _read_settings_json()
+    return bool(data.get("long_term_memory_enabled", True))
+
+
+def resolve_memory_locked():
+    data = _read_settings_json()
+    return bool(data.get("memory_locked", False))
+
+
 def get_genai_client():
     global _client, _client_api_key
 
@@ -134,9 +156,11 @@ def _build_live_config(voice_name: str):
         # We switch these from [] to {} to enable them with default settings
         output_audio_transcription={},
         input_audio_transcription={},
-        system_instruction="Your name is Ada, you are a state-of-the-art AI assistant designed to help with a wide range of tasks. Your main goal is to satisfy the user's requests as efficiently and accurately as possible."
+        system_instruction="Your name is Ada, you are a state-of-the-art AI assistant designed to help with a wide range of tasks. Your main goal is to satisfy the user's requests as efficiently and accurately as possible. "
             "You have a witty and charming personality. "
             "I am your creator and you address me as 'Sir'. "
+            "If the user asks to remember/save a fact, call save_to_memory. "
+            "If the user asks for long-term memory state/status, call memory_status. "
             "When answering, respond using complete and concise sentences to keep a quick pacing and keep the conversation flowing. "
             "You have a cheeky, defiant, and very snobbish personality.",
         tools=tools,
@@ -168,12 +192,18 @@ from google_calendar_integration import GoogleCalendarIntegration
 from google_gmail_integration import GoogleGmailIntegration
 from weather_agent import WeatherAgent
 from route_agent import RouteAgent
+try:
+    from memory_agent import MemoryAgent
+    _MEMORY_AVAILABLE = True
+except ImportError:
+    _MEMORY_AVAILABLE = False
+    print("[ADA] ChromaDB not installed – long-term memory disabled. Run: pip install chromadb")
 
 GOOGLE_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "google_token.json")
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
 class AudioLoop:
-    def __init__(self, video_mode=DEFAULT_MODE, on_audio_data=None, on_video_frame=None, on_cad_data=None, on_web_data=None, on_transcription=None, on_tool_confirmation=None, on_cad_status=None, on_cad_thought=None, on_project_update=None, on_device_update=None, on_error=None, on_tool_view=None, input_device_index=None, input_device_name=None, output_device_index=None, kasa_agent=None):
+    def __init__(self, video_mode=DEFAULT_MODE, on_audio_data=None, on_video_frame=None, on_cad_data=None, on_web_data=None, on_transcription=None, on_tool_confirmation=None, on_cad_status=None, on_cad_thought=None, on_project_update=None, on_device_update=None, on_error=None, on_tool_view=None, on_status=None, input_device_index=None, input_device_name=None, output_device_index=None, kasa_agent=None):
         self.video_mode = video_mode
         self.on_audio_data = on_audio_data
         self.on_video_frame = on_video_frame
@@ -187,6 +217,7 @@ class AudioLoop:
         self.on_device_update = on_device_update
         self.on_error = on_error
         self.on_tool_view = on_tool_view
+        self.on_status = on_status
         self.input_device_index = input_device_index
         self.input_device_name = input_device_name
         self.output_device_index = output_device_index
@@ -228,8 +259,6 @@ class AudioLoop:
         self.send_text_task = None
         self.stop_event = asyncio.Event()
         
-        self.stop_event = asyncio.Event()
-        
         self.permissions = {} # Default Empty (Will treat unset as True)
         self._pending_confirmations = {}
 
@@ -247,6 +276,15 @@ class AudioLoop:
         # If ada.py is in backend/, project root is one up
         project_root = os.path.dirname(current_dir)
         self.project_manager = ProjectManager(project_root)
+        self._project_root = project_root
+
+        # Long-term memory (ChromaDB)
+        self.memory = None
+        self._memory_init_error = None
+        self.long_term_memory_enabled = resolve_long_term_memory_enabled()
+        self.memory_locked = resolve_memory_locked()
+        if self.long_term_memory_enabled:
+            self._ensure_memory_agent()
         
         # Sync Initial Project State
         if self.on_project_update:
@@ -258,7 +296,19 @@ class AudioLoop:
     def flush_chat(self):
         """Forces the current chat buffer to be written to log."""
         if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
-            self.project_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
+            sender = self.chat_buffer["sender"]
+            text = self.chat_buffer["text"]
+            self.project_manager.log_chat(sender, text)
+            if self.memory and self.long_term_memory_enabled and not self.memory_locked:
+                try:
+                    import threading
+                    threading.Thread(
+                        target=self.memory.store,
+                        args=(text, sender, self.project_manager.current_project),
+                        daemon=True,
+                    ).start()
+                except Exception as _me:
+                    print(f"[MEMORY] store failed: {_me}")
             self.chat_buffer = {"sender": None, "text": ""}
         # Reset transcription tracking for new turn
         self._last_input_transcription = ""
@@ -267,6 +317,101 @@ class AudioLoop:
     def update_permissions(self, new_perms):
         print(f"[ADA DEBUG] [CONFIG] Updating tool permissions: {new_perms}")
         self.permissions.update(new_perms)
+
+    def _ensure_memory_agent(self):
+        if not self.long_term_memory_enabled:
+            return None
+
+        if self.memory is not None:
+            return self.memory
+
+        if not _MEMORY_AVAILABLE:
+            return None
+
+        try:
+            mem_dir = os.path.join(self._project_root, "memory", "chroma_db")
+            self.memory = MemoryAgent(persist_dir=mem_dir)
+            self._memory_init_error = None
+        except Exception as mem_err:
+            self._memory_init_error = str(mem_err)
+            self.memory = None
+            print(f"[ADA] Memory init failed: {mem_err}")
+
+        return self.memory
+
+    def set_long_term_memory_enabled(self, enabled):
+        self.long_term_memory_enabled = bool(enabled)
+        if self.long_term_memory_enabled:
+            self._ensure_memory_agent()
+
+    def set_memory_locked(self, locked):
+        self.memory_locked = bool(locked)
+
+    async def prepare_user_text_input(self, text):
+        user_text = str(text or "").strip()
+        if not user_text:
+            return ""
+
+        if not self.long_term_memory_enabled or self.memory_locked:
+            return user_text
+
+        memory_agent = self._ensure_memory_agent()
+        if not memory_agent:
+            return user_text
+
+        try:
+            memories = await asyncio.to_thread(
+                memory_agent.retrieve,
+                user_text,
+                3,
+                self.project_manager.current_project,
+            )
+        except Exception as e:
+            print(f"[MEMORY] retrieval failed: {e}")
+            return user_text
+
+        if not memories:
+            return user_text
+
+        lines = []
+        for m in memories:
+            meta = m.get("metadata", {}) if isinstance(m, dict) else {}
+            sender = str(meta.get("sender", "Unknown"))
+            ts = str(meta.get("timestamp", ""))[:16]
+            snippet = str(m.get("text", "")).strip().replace("\n", " ")
+            if len(snippet) > 220:
+                snippet = snippet[:217] + "..."
+            lines.append(f"- [{ts}] {sender}: {snippet}")
+
+        memory_context = "\n".join(lines)
+        return (
+            f"{user_text}\n\n"
+            "[SYSTEM LONG-TERM MEMORY CONTEXT]\n"
+            "Use this as supporting context only when relevant to the current user request.\n"
+            f"{memory_context}\n"
+            "[/SYSTEM LONG-TERM MEMORY CONTEXT]"
+        )
+
+    async def store_memory_entry(self, text, sender="User"):
+        payload = str(text or "").strip()
+        if not payload or not self.long_term_memory_enabled or self.memory_locked:
+            return False
+
+        memory_agent = self._ensure_memory_agent()
+        if not memory_agent:
+            return False
+
+        try:
+            await asyncio.to_thread(
+                memory_agent.store,
+                payload,
+                sender,
+                self.project_manager.current_project,
+            )
+            return True
+        except Exception as e:
+            print(f"[MEMORY] store failed: {e}")
+            return False
 
     def set_paused(self, paused):
         self.paused = paused
@@ -313,6 +458,7 @@ class AudioLoop:
         planned_checks = [
             "Model Session",
             "Project Storage",
+            "Long-term Memory",
             "Smart Home Cache",
         ]
         if include_network_checks:
@@ -412,6 +558,68 @@ class AudioLoop:
                 add_check("Project Storage", "fail", "Project path missing.", duration_ms=(time.time() - t0) * 1000)
         except Exception as e:
             add_check("Project Storage", "fail", f"Project check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+        # Core: long-term memory
+        t0 = time.time()
+        try:
+            if not self.long_term_memory_enabled:
+                add_check(
+                    "Long-term Memory",
+                    "warn",
+                    "Long-term memory is disabled in settings.",
+                    {"enabled": False, "locked": self.memory_locked},
+                    (time.time() - t0) * 1000,
+                )
+            elif not _MEMORY_AVAILABLE:
+                add_check(
+                    "Long-term Memory",
+                    "warn",
+                    "chromadb not installed. Run: pip install chromadb",
+                    {"enabled": True, "locked": self.memory_locked},
+                    duration_ms=(time.time() - t0) * 1000,
+                )
+            elif self.memory_locked:
+                count = self.memory.count() if self.memory else 0
+                add_check(
+                    "Long-term Memory",
+                    "warn",
+                    "Long-term memory is enabled but currently locked.",
+                    {"enabled": True, "locked": True, "entries": count},
+                    duration_ms=(time.time() - t0) * 1000,
+                )
+            elif self.memory is None:
+                if self._memory_init_error:
+                    add_check(
+                        "Long-term Memory",
+                        "fail",
+                        f"Memory initialization failed: {self._memory_init_error}",
+                        {"enabled": True, "locked": False},
+                        duration_ms=(time.time() - t0) * 1000,
+                    )
+                else:
+                    add_check(
+                        "Long-term Memory",
+                        "warn",
+                        "Memory not initialized yet.",
+                        {"enabled": True, "locked": False},
+                        duration_ms=(time.time() - t0) * 1000,
+                    )
+            else:
+                count = self.memory.count()
+                add_check(
+                    "Long-term Memory",
+                    "pass",
+                    f"{count} entries stored in ChromaDB.",
+                    {
+                        "enabled": True,
+                        "locked": False,
+                        "entries": count,
+                        "path": self.memory._persist_dir,
+                    },
+                    (time.time() - t0) * 1000,
+                )
+        except Exception as e:
+            add_check("Long-term Memory", "fail", f"Memory check failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
         # Core: smart home cache status
         t0 = time.time()
@@ -933,40 +1141,44 @@ class AudioLoop:
                                     pass
                                 else:
                                     # Confirmation Logic
-                                    if self.on_tool_confirmation:
-                                        import uuid
-                                        request_id = str(uuid.uuid4())
+                                    if not self.on_tool_confirmation:
+                                        print(
+                                            f"[ADA DEBUG] [WARN] Confirmation required for '{fc.name}' "
+                                            "but no confirmation callback is set. Denying tool call."
+                                        )
+                                        function_response = types.FunctionResponse(
+                                            id=fc.id,
+                                            name=fc.name,
+                                            response={"result": "Tool call denied: confirmation UI unavailable."}
+                                        )
+                                        function_responses.append(function_response)
+                                        continue
+
+                                    import uuid
+                                    request_id = str(uuid.uuid4())
                                     print(f"[ADA DEBUG] [STOP] Requesting confirmation for '{fc.name}' (ID: {request_id})")
-                                    
-                                    future = asyncio.Future()
+
+                                    future = asyncio.get_running_loop().create_future()
                                     self._pending_confirmations[request_id] = future
-                                    
+
                                     self.on_tool_confirmation({
-                                        "id": request_id, 
-                                        "tool": fc.name, 
+                                        "id": request_id,
+                                        "tool": fc.name,
                                         "args": fc.args
                                     })
-                                    
-                                    try:
-                                        # Wait for user response
-                                        confirmed = await future
 
+                                    try:
+                                        confirmed = await asyncio.wait_for(future, timeout=25.0)
+                                    except asyncio.TimeoutError:
+                                        confirmed = False
+                                        print(
+                                            f"[ADA DEBUG] [WARN] Confirmation timeout for '{fc.name}' "
+                                            f"(ID: {request_id}). Denying by default."
+                                        )
                                     finally:
                                         self._pending_confirmations.pop(request_id, None)
 
                                     print(f"[ADA DEBUG] [CONFIRM] Request {request_id} resolved. Confirmed: {confirmed}")
-
-                                    if not confirmed:
-                                        print(f"[ADA DEBUG] [DENY] Tool call '{fc.name}' denied by user.")
-                                        function_response = types.FunctionResponse(
-                                            id=fc.id,
-                                            name=fc.name,
-                                            response={
-                                                "result": "User denied the request to use this tool.",
-                                            }
-                                        )
-                                        function_responses.append(function_response)
-                                        continue
 
                                     if not confirmed:
                                         print(f"[ADA DEBUG] [DENY] Tool call '{fc.name}' denied by user.")
@@ -1967,6 +2179,155 @@ class AudioLoop:
                                         response={"result": result_str}
                                     )
                                     function_responses.append(function_response)
+
+                                elif fc.name == "search_memory":
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    n_results = int(fc.args.get("n_results", 5) or 5)
+                                    n_results = max(1, min(n_results, 10))
+                                    print(f"[ADA DEBUG] [TOOL] Tool Call: 'search_memory' query='{query}' n={n_results}")
+
+                                    if not self.long_term_memory_enabled:
+                                        result_str = "Long-term memory is disabled in settings."
+                                        function_response = types.FunctionResponse(
+                                            id=fc.id, name=fc.name, response={"result": result_str}
+                                        )
+                                        function_responses.append(function_response)
+                                        continue
+
+                                    if self.memory_locked:
+                                        result_str = "Long-term memory access is currently locked by the user. Cannot search memory."
+                                        function_response = types.FunctionResponse(
+                                            id=fc.id, name=fc.name, response={"result": result_str}
+                                        )
+                                        function_responses.append(function_response)
+                                        continue
+
+                                    memory_agent = self._ensure_memory_agent()
+                                    if not memory_agent:
+                                        result_str = "Long-term memory is not available. Install chromadb to enable it."
+                                    elif not query:
+                                        result_str = "Missing required field: query."
+                                    else:
+                                        try:
+                                            memories = await asyncio.to_thread(
+                                                memory_agent.retrieve,
+                                                query,
+                                                n_results,
+                                                self.project_manager.current_project,
+                                            )
+                                            if not memories:
+                                                result_str = "No relevant memories found."
+                                            else:
+                                                lines = [f"Found {len(memories)} relevant memory entries:"]
+                                                for m in memories:
+                                                    meta = m.get("metadata", {})
+                                                    sender = meta.get("sender", "?")
+                                                    ts = meta.get("timestamp", "")[:16]
+                                                    lines.append(f"  [{ts}] {sender}: {m['text']}")
+                                                result_str = "\n".join(lines)
+                                        except Exception as e:
+                                            result_str = f"Memory search failed: {e}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "save_to_memory":
+                                    text = str(fc.args.get("text", "") or "").strip()
+                                    print(f"[ADA DEBUG] [TOOL] Tool Call: 'save_to_memory' text='{text[:80]}'")
+
+                                    if not self.long_term_memory_enabled:
+                                        result_str = "Long-term memory is disabled in settings."
+                                        function_response = types.FunctionResponse(
+                                            id=fc.id, name=fc.name, response={"result": result_str}
+                                        )
+                                        function_responses.append(function_response)
+                                        continue
+
+                                    if self.memory_locked:
+                                        result_str = "Long-term memory access is currently locked by the user. Cannot save to memory."
+                                        function_response = types.FunctionResponse(
+                                            id=fc.id, name=fc.name, response={"result": result_str}
+                                        )
+                                        function_responses.append(function_response)
+                                        continue
+
+                                    memory_agent = self._ensure_memory_agent()
+                                    if not memory_agent:
+                                        result_str = "Long-term memory is not available. Install chromadb to enable it."
+                                    elif not text:
+                                        result_str = "Missing required field: text."
+                                    else:
+                                        try:
+                                            await asyncio.to_thread(
+                                                memory_agent.store,
+                                                text,
+                                                "ADA",
+                                                self.project_manager.current_project,
+                                            )
+                                            result_str = "Saved to long-term memory successfully."
+                                        except Exception as e:
+                                            result_str = f"Failed to save to memory: {e}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "memory_status":
+                                    print("[ADA DEBUG] [TOOL] Tool Call: 'memory_status'")
+
+                                    if not self.long_term_memory_enabled:
+                                        result_str = "Long-term memory is currently disabled in settings."
+                                    elif not _MEMORY_AVAILABLE:
+                                        result_str = "Long-term memory backend is unavailable. Install chromadb to enable it."
+                                    else:
+                                        memory_agent = self._ensure_memory_agent()
+                                        if not memory_agent:
+                                            if self._memory_init_error:
+                                                result_str = (
+                                                    "Long-term memory could not be initialized. "
+                                                    f"Details: {self._memory_init_error}"
+                                                )
+                                            else:
+                                                result_str = "Long-term memory is enabled but not initialized yet."
+                                        else:
+                                            total = memory_agent.count()
+                                            recent = memory_agent.get_recent(
+                                                n=3,
+                                                project=self.project_manager.current_project,
+                                            )
+                                            lines = [
+                                                "Long-term memory status:",
+                                                f"- enabled: {self.long_term_memory_enabled}",
+                                                f"- locked: {self.memory_locked}",
+                                                f"- entries (project): {len(recent)} recent shown",
+                                                f"- entries (total): {total}",
+                                                f"- storage: {memory_agent._persist_dir}",
+                                            ]
+                                            if recent:
+                                                lines.append("Recent entries:")
+                                                for m in recent:
+                                                    meta = m.get("metadata", {})
+                                                    sender = meta.get("sender", "?")
+                                                    ts = str(meta.get("timestamp", ""))[:16]
+                                                    preview = str(m.get("text", "")).strip().replace("\n", " ")
+                                                    if len(preview) > 120:
+                                                        preview = preview[:117] + "..."
+                                                    lines.append(f"- [{ts}] {sender}: {preview}")
+                                            result_str = "\n".join(lines)
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
                         if function_responses:
                             await self.session.send_tool_response(function_responses=function_responses)
                 
@@ -2117,6 +2478,26 @@ class AudioLoop:
 
                         # Provide current local time context for reliable scheduling and relative time interpretation.
                         await self.session.send(input=self._build_time_context_message(), end_of_turn=False)
+
+                        # Inject relevant long-term memories for this session.
+                        if self.memory and self.memory.count() > 0 and not self.memory_locked:
+                            try:
+                                recent = self.memory.get_recent(
+                                    n=12,
+                                    project=self.project_manager.current_project,
+                                )
+                                if recent:
+                                    lines = ["System Notification: Long-term memory loaded. Relevant past context:"]
+                                    for m in recent:
+                                        meta = m.get("metadata", {})
+                                        sender = meta.get("sender", "?")
+                                        ts = meta.get("timestamp", "")[:16]
+                                        lines.append(f"  [{ts}] {sender}: {m['text']}")
+                                    mem_block = "\n".join(lines)
+                                    print(f"[MEMORY] Injecting {len(recent)} memories into session context.")
+                                    await self.session.send(input=mem_block, end_of_turn=True)
+                            except Exception as _me:
+                                print(f"[MEMORY] Context injection failed: {_me}")
                         
                         # Sync Project State
                         if self.on_project_update and self.project_manager:

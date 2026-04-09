@@ -22,6 +22,7 @@ zeroconf>=0.131.0
 aiohttp>=3.9.0
 # Utilities
 python-dotenv
+chromadb
 # Face & Hand tracking
 mediapipe
 # CAD Generation

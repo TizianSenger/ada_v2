@@ -22,6 +22,9 @@ const TOOLS = [
     { id: 'route_plan', label: 'Route Plan (Free)' },
     { id: 'clear_detail_view', label: 'Clear Detail View' },
     { id: 'system_check', label: 'System Check' },
+    { id: 'search_memory', label: 'Search Memory' },
+    { id: 'save_to_memory', label: 'Save to Memory' },
+    { id: 'memory_status', label: 'Memory Status' },
     { id: 'iterate_cad', label: 'Iterate CAD' },
     { id: 'connect_google_workspace', label: 'Connect Google Workspace' },
     { id: 'list_calendar_events', label: 'List Calendar Events' },
@@ -83,6 +86,9 @@ const TOOL_GROUPS = {
         'get_weather_full_report',
         'route_plan',
         'system_check',
+        'search_memory',
+        'save_to_memory',
+        'memory_status',
     ],
 };
 
@@ -126,6 +132,7 @@ const SettingsWindow = ({
 
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
+    const [longTermMemoryEnabled, setLongTermMemoryEnabled] = useState(true);
     const [apiKeyInput, setApiKeyInput] = useState('');
     const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
     const [apiKeyMessage, setApiKeyMessage] = useState('');
@@ -180,6 +187,9 @@ const SettingsWindow = ({
                 if (typeof settings.face_auth_enabled !== 'undefined') {
                     setFaceAuthEnabled(settings.face_auth_enabled);
                     localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
+                }
+                if (typeof settings.long_term_memory_enabled !== 'undefined') {
+                    setLongTermMemoryEnabled(Boolean(settings.long_term_memory_enabled));
                 }
                 setApiKeyConfigured(Boolean(settings.gemini_api_key_configured));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
@@ -257,6 +267,12 @@ const SettingsWindow = ({
         socket.emit('update_settings', { face_auth_enabled: newVal });
     };
 
+    const toggleLongTermMemory = () => {
+        const newVal = !longTermMemoryEnabled;
+        setLongTermMemoryEnabled(newVal);
+        socket.emit('update_settings', { long_term_memory_enabled: newVal });
+    };
+
     const toggleCameraFlip = () => {
         const newVal = !isCameraFlipped;
         setIsCameraFlipped(newVal);
@@ -325,6 +341,16 @@ const SettingsWindow = ({
                     enabled={faceAuthEnabled}
                     onToggle={toggleFaceAuth}
                 />
+                <div className="mt-2">
+                    <ToggleRow
+                        label="Long-Term Memory"
+                        enabled={longTermMemoryEnabled}
+                        onToggle={toggleLongTermMemory}
+                    />
+                </div>
+                <p className="mt-2 text-[10px] text-cyan-500/70">
+                    Enables persistent memory across sessions using local vector storage.
+                </p>
             </div>
 
             <div>
