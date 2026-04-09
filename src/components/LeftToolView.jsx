@@ -234,7 +234,6 @@ const EmailListView = ({ payload }) => {
 const WhatsappView = ({ payload }) => {
     const data = payload?.whatsapp || {};
     const chats = Array.isArray(data?.chats) ? data.chats : [];
-    const webPreview = typeof data?.webPreview === 'string' ? data.webPreview : '';
     const openEmbeddedWeb = data?.openEmbeddedWeb === true;
     const webviewReloadKey = data?.webviewReloadKey || 'default';
     const unreadCount = Number.isFinite(Number(data?.unreadCount)) ? Number(data.unreadCount) : 0;
@@ -260,7 +259,7 @@ const WhatsappView = ({ payload }) => {
         };
     }, [openEmbeddedWeb, webviewReloadKey]);
     const statusLabel = status === 'connected'
-        ? 'Connected'
+        ? 'Logged In'
         : status === 'login_required'
             ? 'Login Required'
             : status === 'disabled'
@@ -296,15 +295,6 @@ const WhatsappView = ({ payload }) => {
                             useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
                             allowpopups="false"
                             style={{ width: '100%', height: '100%', border: '0', background: '#0b141a' }}
-                        />
-                    </div>
-                )}
-                {!openEmbeddedWeb && webPreview && (
-                    <div className="border border-cyan-900/40 rounded-lg p-1 bg-black/45 overflow-hidden">
-                        <img
-                            src={webPreview}
-                            alt="WhatsApp Web Preview"
-                            className="w-full h-auto max-h-48 object-cover rounded"
                         />
                     </div>
                 )}

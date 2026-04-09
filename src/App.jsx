@@ -692,7 +692,6 @@ function App() {
                 try {
                     const fresh = await ipcRenderer.invoke('whatsapp-read-snapshot', {
                         showWindow: false,
-                        includePreviewImage: wantsOpenDetail,
                         maxChats,
                     });
                     if (fresh && typeof fresh === 'object') {
@@ -713,7 +712,6 @@ function App() {
                 title: source.title || 'WhatsApp',
                 timestamp: source.timestamp || Date.now(),
                 debug: source.debug,
-                webPreview: source.webPreview || null,
             };
 
             let openedDetail = false;
@@ -937,7 +935,6 @@ function App() {
                 title: 'WhatsApp Inbox',
                 whatsapp: {
                     ...payload,
-                    webPreview: leftPanelViewRef.current?.whatsapp?.webPreview || null,
                     openEmbeddedWeb: leftPanelViewRef.current?.whatsapp?.openEmbeddedWeb === true,
                     webviewReloadKey: leftPanelViewRef.current?.whatsapp?.webviewReloadKey || null,
                 },

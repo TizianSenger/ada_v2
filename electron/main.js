@@ -20,7 +20,7 @@ let whatsappConfig = {
 let lastWhatsappUnread = 0;
 
 const WHATSAPP_URL = 'https://web.whatsapp.com';
-const WHATSAPP_POLL_MS = 4500;
+const WHATSAPP_POLL_MS = 10000;
 const WHATSAPP_USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const WHATSAPP_EXPECTED_BLOCKED_HOSTS = ['flows.whatsapp.net'];
@@ -46,7 +46,7 @@ function normalizeWhatsappSnapshot(snapshot) {
 
     return {
         ok: safe.ok !== false,
-        status: String(safe.status || 'loading'),
+        status: String(safe.status || 'login_required'),
         title,
         unreadCount,
         chats: Array.isArray(safe.chats) ? safe.chats : [],
@@ -121,11 +121,14 @@ async function readWhatsappSnapshot() {
             const unreadCount = unreadMatch ? parseInt(unreadMatch[1], 10) || 0 : 0;
 
             const sidePane = document.querySelector('#pane-side');
+            const chatListFallback = document.querySelector('[data-testid="chat-list"], [data-testid="cell-frame-container"], [role="list"] [role="listitem"]');
             const loginCanvas = document.querySelector('canvas[aria-label]');
-            let status = 'loading';
-            if (sidePane) {
+            const loginUiFallback = document.querySelector('[data-testid="qrcode"], [data-testid="intro-md-beta-logo"], [data-testid="link-device-phone-number-code-screen"]');
+            const hasUnreadSignal = unreadMatch !== null;
+            let status = 'connected';
+            if (sidePane || chatListFallback || hasUnreadSignal) {
                 status = 'connected';
-            } else if (loginCanvas || title.toLowerCase().includes('whatsapp')) {
+            } else if (loginCanvas || loginUiFallback) {
                 status = 'login_required';
             }
 
@@ -230,7 +233,7 @@ async function readWhatsappSnapshot() {
                 if (chats.length >= 30) break;
             }
 
-            if (status !== 'connected' && (chats.length > 0 || unreadCount > 0)) {
+            if (status !== 'connected' && (chats.length > 0 || unreadMatch !== null)) {
                 status = 'connected';
             }
 
@@ -346,7 +349,6 @@ function requestAppShutdown(reason = 'user_request') {
 
 async function readWhatsappSnapshotForToolRequest(options = {}) {
     const showWindow = Boolean(options?.showWindow);
-    const includePreviewImage = Boolean(options?.includePreviewImage);
     const maxChatsRaw = Number(options?.maxChats);
     const maxChats = Number.isFinite(maxChatsRaw) ? Math.max(1, Math.min(30, Math.trunc(maxChatsRaw))) : 30;
 
@@ -374,23 +376,17 @@ async function readWhatsappSnapshotForToolRequest(options = {}) {
     // Give WhatsApp Web one short UI tick to hydrate visible rows before reading.
     await new Promise((resolve) => setTimeout(resolve, showWindow ? 700 : 180));
 
-    const normalized = normalizeWhatsappSnapshot(await readWhatsappSnapshot());
-    let webPreview = null;
+    let normalized = normalizeWhatsappSnapshot(await readWhatsappSnapshot());
 
-    if (includePreviewImage) {
-        try {
-            const pageImage = await win.webContents.capturePage();
-            const pngBuffer = pageImage.toPNG();
-            webPreview = `data:image/png;base64,${pngBuffer.toString('base64')}`;
-        } catch (err) {
-            console.warn(`[WhatsApp] Failed to capture preview image: ${err.message}`);
-        }
+    // Hidden windows can transiently report login_required before chat pane is hydrated.
+    if (normalized.status === 'login_required') {
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        normalized = normalizeWhatsappSnapshot(await readWhatsappSnapshot());
     }
 
     return {
         ...normalized,
         chats: normalized.chats.slice(0, maxChats),
-        webPreview,
     };
 }
 
