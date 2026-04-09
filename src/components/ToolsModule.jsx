@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mic, MicOff, Settings, Power, Video, VideoOff, Hand, Lightbulb, Printer, Globe, Box, Gauge } from 'lucide-react';
+import { Mic, MicOff, Settings, Power, Video, VideoOff, Hand, Lightbulb, Printer, Globe, Box, Gauge, Lock } from 'lucide-react';
 
 const ToolsModule = ({
     isConnected,
@@ -24,6 +24,7 @@ const ToolsModule = ({
     onToggleQuota,
     showQuotaWindow,
     quotaState,
+    onLockSession,
     activeDragElement,
 
     position,
@@ -157,6 +158,15 @@ const ToolsModule = ({
                     title="Quota Status"
                 >
                     <Gauge size={24} />
+                </button>
+
+                {/* Manual Lock */}
+                <button
+                    onClick={onLockSession}
+                    className="p-3 rounded-full border-2 transition-all duration-300 border-amber-500/80 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 shadow-[0_0_15px_rgba(251,191,36,0.28)]"
+                    title="Lock Session"
+                >
+                    <Lock size={24} />
                 </button>
             </div>
         </div>

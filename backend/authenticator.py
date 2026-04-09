@@ -9,6 +9,8 @@ import numpy as np
 import urllib.request
 import sys
 from collections import deque
+import threading
+import time
 
 class FaceAuthenticator:
     # MediaPipe Face Landmarker model URL
@@ -31,6 +33,10 @@ class FaceAuthenticator:
         self.running = False
         self.reference_landmarks = None
         self.landmarker = None
+        self.preferred_camera_index = None
+        self.active_camera_index = None
+        self._loop_guard = threading.Lock()
+        self._loop_active = False
 
         self._reset_security_state()
 
@@ -245,8 +251,16 @@ class FaceAuthenticator:
                 await self.on_status_change(True)
             return
 
+        with self._loop_guard:
+            if self._loop_active:
+                print("[AUTH] Authentication loop already active. Skipping duplicate start request.")
+                return
+            self._loop_active = True
+
         if self.reference_landmarks is None:
              print("[AUTH] [ERR] Cannot start auth loop: No reference landmarks.")
+             with self._loop_guard:
+                 self._loop_active = False
              return
 
         self.running = True
@@ -257,15 +271,45 @@ class FaceAuthenticator:
         loop = asyncio.get_running_loop()
         
         # Use a separate thread for blocking camera/CV operations
-        await asyncio.to_thread(self._run_cv_loop, loop)
-
-        print("[AUTH] Authentication loop finished.")
+        try:
+            await asyncio.to_thread(self._run_cv_loop, loop)
+            print("[AUTH] Authentication loop finished.")
+        finally:
+            self.running = False
+            with self._loop_guard:
+                self._loop_active = False
     
     def stop(self):
         print("[AUTH] Stopping authentication loop...")
         self.running = False
 
+    def set_preferred_camera_index(self, index):
+        if index is None:
+            self.preferred_camera_index = None
+            return
+        try:
+            value = int(index)
+        except Exception:
+            self.preferred_camera_index = None
+            return
+        self.preferred_camera_index = value if value >= 0 else None
+
+    def is_loop_active(self):
+        with self._loop_guard:
+            return self._loop_active
+
+    def get_active_camera_index(self):
+        return self.active_camera_index
+
     def _run_cv_loop(self, loop):
+        def safe_release(cap):
+            if cap is None:
+                return
+            try:
+                cap.release()
+            except Exception as e:
+                print(f"[AUTH] [WARN] VideoCapture.release() failed: {e}")
+
         def _backend_candidates():
             if sys.platform.startswith("win"):
                 return [
@@ -292,7 +336,7 @@ class FaceAuthenticator:
                 cap = cv2.VideoCapture(index, backend_id)
                 if not cap.isOpened():
                     print(f"[AUTH] [WARN] Could not open index {index} with {backend_name}.")
-                    cap.release()
+                    safe_release(cap)
                     continue
 
                 # Warm up a couple of frames; some drivers return empty first frames.
@@ -305,16 +349,21 @@ class FaceAuthenticator:
 
                 if not frame_ok:
                     print(f"[AUTH] [WARN] Opened index {index} with {backend_name} but no valid frame yet.")
-                    cap.release()
+                    safe_release(cap)
                     continue
 
                 print(f"[AUTH] [OK] Camera opened: index {index} via {backend_name}.")
+                self.active_camera_index = index
                 return cap
 
             return None
 
+        candidate_indices = list(range(0, 7))
+        if self.preferred_camera_index is not None:
+            candidate_indices = [self.preferred_camera_index] + [i for i in candidate_indices if i != self.preferred_camera_index]
+
         video_capture = None
-        for candidate_index in range(0, 7):
+        for candidate_index in candidate_indices:
             video_capture = try_open_camera(candidate_index)
             if video_capture is not None:
                 break
@@ -324,79 +373,90 @@ class FaceAuthenticator:
              self.running = False
              return
 
-        while self.running and not self.authenticated:
-            ret, frame = video_capture.read()
-            if not ret:
-                print("[AUTH] [ERR] Failed to read frame from camera loop.")
-                break
-            
-            # Convert BGR to RGB
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            current_points = self._extract_landmark_points(rgb_frame)
-            current_landmarks = None if current_points is None else self._normalized_landmark_vector(current_points)
-
-            if current_points is None:
-                self.similarity_history.clear()
-            else:
-                face_ratio = self._face_bbox_ratio(current_points)
-                profile = self._distance_profile(face_ratio)
-                sharpness = self._frame_sharpness(frame)
-                z_std = float(np.std(current_points[:, 2]))
-
-                # Quality gates to reject tiny, blurry, or implausible face geometry frames.
-                quality_ok = (
-                    profile["face_ratio_min"] <= face_ratio <= profile["face_ratio_max"]
-                    and sharpness >= profile["sharpness_min"]
-                    and profile["z_std_min"] <= z_std <= profile["z_std_max"]
-                )
-
-                if quality_ok:
-                    self.quality_frame_count += 1
-                    similarity = self._similarity_score(self.reference_landmarks, current_landmarks)
-                    if similarity >= profile["min_similarity_per_frame"]:
-                        self.similarity_history.append(similarity)
-                    else:
-                        self.similarity_history.clear()
-                else:
-                    self.similarity_history.clear()
-
-                passive_liveness_ok = self._passive_liveness_ok(current_points, profile)
-                fast_slice = list(self.similarity_history)[-profile["fast_unlock_window"]:]
-                fast_unlock_ok = (
-                    len(fast_slice) >= profile["fast_unlock_window"]
-                    and min(fast_slice) >= profile["fast_min_similarity"]
-                    and self.quality_frame_count >= profile["fast_unlock_window"]
-                )
-
-                secure_unlock_ok = False
-                if len(self.similarity_history) >= profile["unlock_window"] and passive_liveness_ok:
-                    avg_similarity = float(np.mean(self.similarity_history))
-                    min_similarity = float(np.min(self.similarity_history))
-                    secure_unlock_ok = (
-                        avg_similarity >= profile["avg_similarity_required"]
-                        and min_similarity >= profile["min_similarity_per_frame"]
-                    )
-
-                if fast_unlock_ok or secure_unlock_ok:
-                    self.authenticated = True
-                    avg_similarity = float(np.mean(self.similarity_history)) if self.similarity_history else 0.0
-                    min_similarity = float(np.min(self.similarity_history)) if self.similarity_history else 0.0
-                    print(
-                        "[AUTH] [OPEN] FACE VERIFIED (fast/secure multi-frame). "
-                        f"profile={profile['name']}, avg={avg_similarity:.4f}, min={min_similarity:.4f}, quality_frames={self.quality_frame_count}"
-                    )
-                    if self.on_status_change:
-                        asyncio.run_coroutine_threadsafe(self.on_status_change(True), loop)
-                    self.running = False
+        try:
+            last_frame_emit_ts = 0.0
+            frame_emit_interval_sec = 0.12  # ~8 FPS for lockscreen preview to keep socket healthy
+            while self.running and not self.authenticated:
+                try:
+                    ret, frame = video_capture.read()
+                except Exception as e:
+                    print(f"[AUTH] [ERR] Camera read failed: {e}")
                     break
 
-            # Send frame to frontend if callback exists
-            if self.on_frame:
-                small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-                _, buffer = cv2.imencode('.jpg', small_frame)
-                b64_str = base64.b64encode(buffer).decode('utf-8')
-                
-                asyncio.run_coroutine_threadsafe(self.on_frame(b64_str), loop)
+                if not ret:
+                    print("[AUTH] [ERR] Failed to read frame from camera loop.")
+                    break
+            
+                # Convert BGR to RGB
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+                current_points = self._extract_landmark_points(rgb_frame)
+                current_landmarks = None if current_points is None else self._normalized_landmark_vector(current_points)
 
-        video_capture.release()
+                if current_points is None:
+                    self.similarity_history.clear()
+                else:
+                    face_ratio = self._face_bbox_ratio(current_points)
+                    profile = self._distance_profile(face_ratio)
+                    sharpness = self._frame_sharpness(frame)
+                    z_std = float(np.std(current_points[:, 2]))
+
+                    # Quality gates to reject tiny, blurry, or implausible face geometry frames.
+                    quality_ok = (
+                        profile["face_ratio_min"] <= face_ratio <= profile["face_ratio_max"]
+                        and sharpness >= profile["sharpness_min"]
+                        and profile["z_std_min"] <= z_std <= profile["z_std_max"]
+                    )
+
+                    if quality_ok:
+                        self.quality_frame_count += 1
+                        similarity = self._similarity_score(self.reference_landmarks, current_landmarks)
+                        if similarity >= profile["min_similarity_per_frame"]:
+                            self.similarity_history.append(similarity)
+                        else:
+                            self.similarity_history.clear()
+                    else:
+                        self.similarity_history.clear()
+
+                    passive_liveness_ok = self._passive_liveness_ok(current_points, profile)
+                    fast_slice = list(self.similarity_history)[-profile["fast_unlock_window"]:]
+                    fast_unlock_ok = (
+                        len(fast_slice) >= profile["fast_unlock_window"]
+                        and min(fast_slice) >= profile["fast_min_similarity"]
+                        and self.quality_frame_count >= profile["fast_unlock_window"]
+                    )
+
+                    secure_unlock_ok = False
+                    if len(self.similarity_history) >= profile["unlock_window"] and passive_liveness_ok:
+                        avg_similarity = float(np.mean(self.similarity_history))
+                        min_similarity = float(np.min(self.similarity_history))
+                        secure_unlock_ok = (
+                            avg_similarity >= profile["avg_similarity_required"]
+                            and min_similarity >= profile["min_similarity_per_frame"]
+                        )
+
+                    if fast_unlock_ok or secure_unlock_ok:
+                        self.authenticated = True
+                        avg_similarity = float(np.mean(self.similarity_history)) if self.similarity_history else 0.0
+                        min_similarity = float(np.min(self.similarity_history)) if self.similarity_history else 0.0
+                        print(
+                            "[AUTH] [OPEN] FACE VERIFIED (fast/secure multi-frame). "
+                            f"profile={profile['name']}, avg={avg_similarity:.4f}, min={min_similarity:.4f}, quality_frames={self.quality_frame_count}"
+                        )
+                        if self.on_status_change:
+                            asyncio.run_coroutine_threadsafe(self.on_status_change(True), loop)
+                        self.running = False
+                        break
+
+                # Send frame to frontend if callback exists
+                if self.on_frame:
+                    now_ts = time.monotonic()
+                    if now_ts - last_frame_emit_ts >= frame_emit_interval_sec:
+                        small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+                        _, buffer = cv2.imencode('.jpg', small_frame)
+                        b64_str = base64.b64encode(buffer).decode('utf-8')
+                        asyncio.run_coroutine_threadsafe(self.on_frame(b64_str), loop)
+                        last_frame_emit_ts = now_ts
+        finally:
+            self.active_camera_index = None
+            safe_release(video_capture)

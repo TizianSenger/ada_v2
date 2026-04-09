@@ -62,6 +62,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 # Global state
 audio_loop = None
 loop_task = None
+audio_stop_lock = asyncio.Lock()
 authenticator = None
 kasa_agent = KasaAgent()
 google_calendar = GoogleCalendarIntegration()
@@ -73,6 +74,7 @@ REFERENCE_IMAGE_FILE = os.path.join(BASE_DIR, "reference.jpg")
 DEFAULT_SETTINGS = {
     "face_auth_enabled": False, # Default OFF as requested
     "face_reference_configured": False,
+    "auth_camera_index": None,
     "backup_pin_hash": "",
     "backup_pin_salt": "",
     "long_term_memory_enabled": True,
@@ -360,6 +362,8 @@ async def connect(sid, environ):
             on_status_change=on_auth_status,
             on_frame=on_auth_frame
         )
+        if hasattr(authenticator, "set_preferred_camera_index"):
+            authenticator.set_preferred_camera_index(SETTINGS.get("auth_camera_index"))
     
     # Check if already authenticated or needs to start
     if authenticator.authenticated:
@@ -371,8 +375,8 @@ async def connect(sid, environ):
             if not SETTINGS.get("face_reference_configured", False) or not os.path.exists(REFERENCE_IMAGE_FILE):
                 await sio.emit('error', {'msg': 'Face Authentication enabled but no reference face is configured. Open Settings and run Setup Face Recognition.'}, room=sid)
                 return
-            # Start the auth loop in background
-            asyncio.create_task(authenticator.start_authentication_loop())
+            # Camera auth is now started manually from lockscreen for better performance/control.
+            await sio.emit('auth_camera_state', {'running': False, 'message': 'Press Start Camera on lockscreen.'}, room=sid)
         else:
             # Bypass Auth
             print("Face Auth Disabled. Auto-authenticating.")
@@ -595,11 +599,41 @@ async def monitor_printers_loop():
 
 @sio.event
 async def stop_audio(sid):
-    global audio_loop
-    if audio_loop:
-        audio_loop.stop() 
-        print("Stopping Audio Loop")
+    await _stop_audio_loop()
+
+
+async def _stop_audio_loop():
+    global audio_loop, loop_task
+
+    async with audio_stop_lock:
+        if not audio_loop and not loop_task:
+            return
+
+        print("[SERVER] Stopping Audio Loop...")
+
+        if audio_loop:
+            try:
+                audio_loop.stop()
+            except Exception as e:
+                print(f"[SERVER] Audio loop stop signal failed: {e}")
+
+        # Wait shortly for graceful shutdown.
+        task = loop_task
+        if task:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=2.5)
+            except asyncio.TimeoutError:
+                print("[SERVER] Audio loop stop timeout, cancelling task...")
+                task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"[SERVER] Audio loop task finished with exception during stop: {e}")
+
         audio_loop = None
+        loop_task = None
         await sio.emit('status', {'msg': 'A.D.A Stopped'})
 
 @sio.event
@@ -1178,6 +1212,114 @@ async def control_home(sid, data):
 @sio.event
 async def get_settings(sid):
     await sio.emit('settings', _settings_for_client())
+
+
+@sio.event
+async def set_auth_camera(sid, data=None):
+    payload = data or {}
+    raw_index = payload.get("camera_index", None)
+
+    camera_index = None
+    if raw_index is not None:
+        try:
+            parsed = int(raw_index)
+            camera_index = parsed if parsed >= 0 else None
+        except Exception:
+            camera_index = None
+
+    old_index = SETTINGS.get("auth_camera_index")
+    if old_index == camera_index:
+        await sio.emit('settings', _settings_for_client(), room=sid)
+        return
+
+    SETTINGS["auth_camera_index"] = camera_index
+    save_settings()
+
+    if authenticator and hasattr(authenticator, "set_preferred_camera_index"):
+        authenticator.set_preferred_camera_index(camera_index)
+
+        async def _restart_auth_when_idle():
+            # Wait briefly until the previous loop fully exits.
+            for _ in range(60):
+                try:
+                    if not authenticator.is_loop_active():
+                        break
+                except Exception:
+                    break
+                await asyncio.sleep(0.05)
+
+            if SETTINGS.get("face_auth_enabled", False) and not authenticator.authenticated and authenticator.is_loop_active():
+                asyncio.create_task(authenticator.start_authentication_loop())
+
+        # If camera auth loop is currently active, restart to apply camera selection.
+        if SETTINGS.get("face_auth_enabled", False) and not authenticator.authenticated and authenticator.is_loop_active():
+            authenticator.stop()
+            asyncio.create_task(_restart_auth_when_idle())
+
+    await sio.emit('settings', _settings_for_client(), room=sid)
+
+
+@sio.event
+async def start_auth_camera(sid, data=None):
+    global authenticator
+
+    if authenticator is None:
+        await sio.emit('auth_camera_state', {'running': False, 'message': 'Authenticator not initialized.'}, room=sid)
+        return
+
+    if authenticator.authenticated:
+        await sio.emit('auth_status', {'authenticated': True}, room=sid)
+        await sio.emit('auth_camera_state', {'running': False, 'message': 'Already authenticated.'}, room=sid)
+        return
+
+    if not SETTINGS.get("face_reference_configured", False) or not os.path.exists(REFERENCE_IMAGE_FILE):
+        await sio.emit('auth_camera_state', {'running': False, 'message': 'Face reference not configured.'}, room=sid)
+        return
+
+    if authenticator.is_loop_active():
+        await sio.emit('auth_camera_state', {'running': True, 'message': 'Camera already running.'}, room=sid)
+        return
+
+    if hasattr(authenticator, "set_preferred_camera_index"):
+        authenticator.set_preferred_camera_index(SETTINGS.get("auth_camera_index"))
+
+    await sio.emit('auth_camera_state', {'running': True, 'message': 'Starting camera...'}, room=sid)
+    asyncio.create_task(authenticator.start_authentication_loop())
+
+
+@sio.event
+async def stop_auth_camera(sid, data=None):
+    global authenticator
+
+    if authenticator is None:
+        await sio.emit('auth_camera_state', {'running': False, 'message': 'Authenticator not initialized.'}, room=sid)
+        return
+
+    authenticator.stop()
+    await sio.emit('auth_camera_state', {'running': False, 'message': 'Camera stopped.'}, room=sid)
+
+
+@sio.event
+async def lock_auth_session(sid, data=None):
+    global authenticator
+
+    # Ensure ADA model/audio is fully stopped before locking to avoid dual-session behavior.
+    await _stop_audio_loop()
+
+    if authenticator is None:
+        await sio.emit('auth_status', {'authenticated': False}, room=sid)
+        return
+
+    authenticator.stop()
+    authenticator.authenticated = False
+    await sio.emit('auth_status', {'authenticated': False})
+    await sio.emit('auth_camera_state', {'running': False, 'message': 'Session locked. Start camera to unlock.'})
+
+    if hasattr(authenticator, "set_preferred_camera_index"):
+        authenticator.set_preferred_camera_index(SETTINGS.get("auth_camera_index"))
+
+    if not SETTINGS.get("face_reference_configured", False) or not os.path.exists(REFERENCE_IMAGE_FILE):
+        await sio.emit('status', {'msg': 'Session locked. Configure face setup or use backup PIN to unlock.'}, room=sid)
 
 
 @sio.event

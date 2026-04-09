@@ -94,6 +94,11 @@ function App() {
     const [selectedMicId, setSelectedMicId] = useState(() => localStorage.getItem('selectedMicId') || '');
     const [selectedSpeakerId, setSelectedSpeakerId] = useState(() => localStorage.getItem('selectedSpeakerId') || '');
     const [selectedWebcamId, setSelectedWebcamId] = useState(() => localStorage.getItem('selectedWebcamId') || '');
+    const [authCameraIndex, setAuthCameraIndex] = useState(() => {
+        const raw = localStorage.getItem('auth_camera_index');
+        const parsed = Number.parseInt(raw ?? '', 10);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    });
     const [showSettings, setShowSettings] = useState(false);
     const [currentProject, setCurrentProject] = useState('default');
 
@@ -299,6 +304,7 @@ function App() {
 
     // Ref to track if model has been auto-connected (prevents duplicate connections)
     const hasAutoConnectedRef = useRef(false);
+    const relockRestoreRef = useRef({ shouldRestoreConnection: false, reconnectInProgress: false });
 
     const updateQuotaInfoFromMessage = (msg, source = 'backend') => {
         const text = String(msg || '');
@@ -383,6 +389,7 @@ function App() {
             // Update status bar based on backend messages
             if (data.msg === 'A.D.A Started') {
                 setStatus('Model Connected');
+                relockRestoreRef.current.reconnectInProgress = false;
             } else if (data.msg === 'A.D.A Stopped') {
                 setStatus('Connected');
             }
@@ -414,6 +421,13 @@ function App() {
             if (settings && typeof settings.face_auth_enabled !== 'undefined') {
                 setFaceAuthEnabled(settings.face_auth_enabled);
                 localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
+            }
+            if (settings && typeof settings.auth_camera_index !== 'undefined') {
+                const parsed = Number.parseInt(settings.auth_camera_index, 10);
+                if (Number.isFinite(parsed) && parsed >= 0) {
+                    setAuthCameraIndex(parsed);
+                    localStorage.setItem('auth_camera_index', String(parsed));
+                }
             }
             if (typeof settings.camera_flipped !== 'undefined') {
                 console.log("[Settings] Camera flip set to:", settings.camera_flipped);
@@ -1162,6 +1176,22 @@ function App() {
         }
     };
 
+    const lockSession = () => {
+        const wasConnected = isConnected;
+        relockRestoreRef.current.shouldRestoreConnection = wasConnected;
+        relockRestoreRef.current.reconnectInProgress = false;
+
+        if (wasConnected) {
+            socket.emit('stop_audio');
+        }
+
+        setIsConnected(false);
+        setIsMuted(false);
+        setIsAuthenticated(false);
+        setIsLockScreenVisible(true);
+        socket.emit('lock_auth_session');
+    };
+
     const toggleMute = () => {
         if (!isConnected) return; // Can't mute if not connected
 
@@ -1244,6 +1274,44 @@ function App() {
             setConfirmationRequest(null);
         }
     };
+
+    useEffect(() => {
+        if (!isAuthenticated) {
+            return;
+        }
+        if (!relockRestoreRef.current.shouldRestoreConnection) {
+            return;
+        }
+        if (relockRestoreRef.current.reconnectInProgress) {
+            return;
+        }
+        if (isConnected) {
+            relockRestoreRef.current.shouldRestoreConnection = false;
+            relockRestoreRef.current.reconnectInProgress = false;
+            return;
+        }
+        if (!socketConnected || micDevices.length === 0) {
+            return;
+        }
+
+        relockRestoreRef.current.reconnectInProgress = true;
+
+        const index = micDevices.findIndex(d => d.deviceId === selectedMicId);
+        const queryDevice = micDevices.find(d => d.deviceId === selectedMicId);
+        const deviceName = queryDevice ? queryDevice.label : null;
+
+        setStatus('Connecting...');
+        socket.emit('start_audio', {
+            device_index: index >= 0 ? index : null,
+            device_name: deviceName,
+            muted: false,
+        });
+
+        setIsConnected(true);
+        setIsMuted(false);
+        relockRestoreRef.current.shouldRestoreConnection = false;
+        relockRestoreRef.current.reconnectInProgress = false;
+    }, [isAuthenticated, socketConnected, micDevices, selectedMicId]);
 
     // Updated Bounds Checking Logic
     const updateElementPosition = (id, dx, dy) => {
@@ -1615,6 +1683,10 @@ function App() {
                             className="absolute inset-0 w-full h-full opacity-80"
                             style={{ transform: isCameraFlipped ? 'scaleX(-1)' : 'none' }}
                         />
+
+                        <div className="absolute bottom-2 left-2 text-[10px] text-cyan-300 bg-black/60 backdrop-blur px-2 py-0.5 rounded border border-cyan-500/20 z-10 tracking-wide max-w-[90%] truncate">
+                            AUTH CAM IDX {authCameraIndex}: {webcamDevices[authCameraIndex]?.label || 'Mapped by backend index'}
+                        </div>
                     </div>
                 </div>
 
@@ -1756,6 +1828,7 @@ function App() {
                         onToggleQuota={() => setShowQuotaWindow(!showQuotaWindow)}
                         showQuotaWindow={showQuotaWindow}
                         quotaState={quotaInfo.level}
+                        onLockSession={lockSession}
                         activeDragElement={activeDragElement}
                         position={elementPositions.tools}
                         onMouseDown={(e) => handleMouseDown(e, 'tools')}

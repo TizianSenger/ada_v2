@@ -1,13 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Lock, Unlock, User } from 'lucide-react';
 
 const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
     const [frameSrc, setFrameSrc] = useState(null);
     const [message, setMessage] = useState("Initializing Security...");
     const [isUnlocking, setIsUnlocking] = useState(false);
+    const [availableCameras, setAvailableCameras] = useState([]);
+    const [selectedCameraIndex, setSelectedCameraIndex] = useState(() => {
+        const raw = window.localStorage.getItem('auth_camera_index');
+        const parsed = Number.parseInt(raw ?? '', 10);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+    });
+    const [isAuthCameraRunning, setIsAuthCameraRunning] = useState(false);
     const [pinInput, setPinInput] = useState('');
     const [pinMessage, setPinMessage] = useState('');
     const [isPinChecking, setIsPinChecking] = useState(false);
+    const selectedCameraIndexRef = useRef(selectedCameraIndex);
+
+    useEffect(() => {
+        selectedCameraIndexRef.current = selectedCameraIndex;
+    }, [selectedCameraIndex]);
 
     const playUnlockTone = () => {
         try {
@@ -51,12 +63,40 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
     useEffect(() => {
         if (!socket) return;
 
+        const refreshCameraList = async () => {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const cams = devices.filter((d) => d.kind === 'videoinput');
+                const optionCount = Math.max(7, cams.length);
+                const normalized = Array.from({ length: optionCount }, (_, idx) => ({
+                    index: idx,
+                    label: cams[idx]?.label || `Backend Camera Index ${idx}`,
+                }));
+                setAvailableCameras(normalized);
+
+                if (normalized.length > 0) {
+                    const currentIndex = selectedCameraIndexRef.current;
+                    const exists = normalized.some((cam) => cam.index === currentIndex);
+                    const nextIndex = exists ? currentIndex : normalized[0].index;
+                    if (!exists) {
+                        setSelectedCameraIndex(nextIndex);
+                        selectedCameraIndexRef.current = nextIndex;
+                    }
+                    socket.emit('set_auth_camera', { camera_index: nextIndex });
+                    window.localStorage.setItem('auth_camera_index', String(nextIndex));
+                }
+            } catch (err) {
+                console.warn('Could not enumerate cameras:', err);
+            }
+        };
+
         const handleAuthStatus = (data) => {
             console.log("Auth Status:", data);
             if (data.authenticated && !isUnlocking) {
                 // Start Unlock Sequence
                 setIsUnlocking(true);
                 setMessage("Identity Verified. Access Granted.");
+                setIsAuthCameraRunning(false);
                 playUnlockTone();
 
                 // Wait for animation then notify parent
@@ -73,6 +113,16 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
 
         const handleAuthFrame = (data) => {
             setFrameSrc(`data:image/jpeg;base64,${data.image}`);
+            setIsAuthCameraRunning(true);
+        };
+
+        const handleAuthCameraState = (data) => {
+            const running = Boolean(data?.running);
+            const msg = String(data?.message || '').trim();
+            setIsAuthCameraRunning(running);
+            if (msg) {
+                setMessage(msg);
+            }
         };
 
         const handleBackupPinResult = (data) => {
@@ -88,13 +138,43 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
         socket.on('auth_status', handleAuthStatus);
         socket.on('auth_frame', handleAuthFrame);
         socket.on('backup_pin_result', handleBackupPinResult);
+        socket.on('auth_camera_state', handleAuthCameraState);
+
+        refreshCameraList();
+        if (navigator.mediaDevices?.addEventListener) {
+            navigator.mediaDevices.addEventListener('devicechange', refreshCameraList);
+        }
 
         return () => {
             socket.off('auth_status', handleAuthStatus);
             socket.off('auth_frame', handleAuthFrame);
             socket.off('backup_pin_result', handleBackupPinResult);
+            socket.off('auth_camera_state', handleAuthCameraState);
+            if (navigator.mediaDevices?.removeEventListener) {
+                navigator.mediaDevices.removeEventListener('devicechange', refreshCameraList);
+            }
         };
     }, [socket, onAuthenticated, onAnimationComplete, isUnlocking]);
+
+    const handleCameraChange = (event) => {
+        const nextIndex = Number.parseInt(event.target.value, 10);
+        if (!Number.isFinite(nextIndex) || nextIndex < 0) {
+            return;
+        }
+        setSelectedCameraIndex(nextIndex);
+        window.localStorage.setItem('auth_camera_index', String(nextIndex));
+        socket.emit('set_auth_camera', { camera_index: nextIndex });
+        setMessage('Switching camera...');
+    };
+
+    const toggleAuthCamera = () => {
+        if (isAuthCameraRunning) {
+            socket.emit('stop_auth_camera');
+        } else {
+            setMessage('Starting camera...');
+            socket.emit('start_auth_camera');
+        }
+    };
 
     const submitPinUnlock = () => {
         const pin = String(pinInput || '').trim();
@@ -158,6 +238,34 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
                 <div className={`text-sm tracking-widest ${isUnlocking ? 'text-green-300' : 'text-cyan-300'} animate-pulse transition-colors duration-500`}>
                     {message}
                 </div>
+
+                {!isUnlocking && (
+                    <div className="w-full max-w-xs bg-black/40 border border-cyan-900/30 rounded p-2">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-500/70 mb-1 text-center">Auth Camera</div>
+                        <button
+                            onClick={toggleAuthCamera}
+                            className={`w-full mb-2 px-2 py-1.5 text-[10px] uppercase tracking-widest rounded border ${isAuthCameraRunning
+                                ? 'border-red-500/70 bg-red-500/10 text-red-300 hover:bg-red-500/20'
+                                : 'border-cyan-500/70 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20'
+                                }`}
+                        >
+                            {isAuthCameraRunning ? 'Stop Camera' : 'Start Camera'}
+                        </button>
+                        <select
+                            value={selectedCameraIndex}
+                            onChange={handleCameraChange}
+                            className="w-full bg-black/70 border border-cyan-800 rounded px-2 py-1.5 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        >
+                            {availableCameras.length === 0 ? (
+                                <option value={0}>No camera detected</option>
+                            ) : (
+                                availableCameras.map((cam) => (
+                                    <option key={cam.index} value={cam.index}>{`IDX ${cam.index}: ${cam.label}`}</option>
+                                ))
+                            )}
+                        </select>
+                    </div>
+                )}
 
                 {!isUnlocking && (
                     <div className="w-full max-w-xs pt-2 border-t border-cyan-900/30">
