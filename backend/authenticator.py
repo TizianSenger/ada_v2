@@ -7,6 +7,7 @@ import os
 import base64
 import numpy as np
 import urllib.request
+import sys
 
 class FaceAuthenticator:
     # MediaPipe Face Landmarker model URL
@@ -158,27 +159,58 @@ class FaceAuthenticator:
         self.running = False
 
     def _run_cv_loop(self, loop):
-        def try_open_camera(index):
-            print(f"[AUTH] Trying to open camera with index {index}...")
-            cap = cv2.VideoCapture(index, cv2.CAP_AVFOUNDATION)
-            if not cap.isOpened():
-                print(f"[AUTH] [ERR] Could not open video device {index}.")
-                return None
-            
-            ret, frame = cap.read()
-            if not ret:
-                 print(f"[AUTH] [ERR] Opened device {index} but failed to read first frame.")
-                 cap.release()
-                 return None
-            
-            print(f"[AUTH] [OK] Successfully opened and read from device {index}.")
-            return cap
+        def _backend_candidates():
+            if sys.platform.startswith("win"):
+                return [
+                    ("CAP_DSHOW", getattr(cv2, "CAP_DSHOW", None)),
+                    ("CAP_MSMF", getattr(cv2, "CAP_MSMF", None)),
+                    ("CAP_ANY", getattr(cv2, "CAP_ANY", 0)),
+                ]
+            if sys.platform == "darwin":
+                return [
+                    ("CAP_AVFOUNDATION", getattr(cv2, "CAP_AVFOUNDATION", None)),
+                    ("CAP_ANY", getattr(cv2, "CAP_ANY", 0)),
+                ]
+            return [
+                ("CAP_V4L2", getattr(cv2, "CAP_V4L2", None)),
+                ("CAP_ANY", getattr(cv2, "CAP_ANY", 0)),
+            ]
 
-        video_capture = try_open_camera(0)
-        
-        if video_capture is None:
-             print("[AUTH] Device 0 failed. Trying device 1...")
-             video_capture = try_open_camera(1)
+        def try_open_camera(index):
+            for backend_name, backend_id in _backend_candidates():
+                if backend_id is None:
+                    continue
+
+                print(f"[AUTH] Trying camera index {index} with {backend_name}...")
+                cap = cv2.VideoCapture(index, backend_id)
+                if not cap.isOpened():
+                    print(f"[AUTH] [WARN] Could not open index {index} with {backend_name}.")
+                    cap.release()
+                    continue
+
+                # Warm up a couple of frames; some drivers return empty first frames.
+                frame_ok = False
+                for _ in range(6):
+                    ret, _ = cap.read()
+                    if ret:
+                        frame_ok = True
+                        break
+
+                if not frame_ok:
+                    print(f"[AUTH] [WARN] Opened index {index} with {backend_name} but no valid frame yet.")
+                    cap.release()
+                    continue
+
+                print(f"[AUTH] [OK] Camera opened: index {index} via {backend_name}.")
+                return cap
+
+            return None
+
+        video_capture = None
+        for candidate_index in range(0, 7):
+            video_capture = try_open_camera(candidate_index)
+            if video_capture is not None:
+                break
 
         if video_capture is None:
              print("[AUTH] [ERR] All camera attempts failed. Authentication cannot proceed.")

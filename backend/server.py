@@ -15,8 +15,14 @@ import sys
 import os
 import json
 import re
+import hashlib
+import hmac
+import base64
 from datetime import datetime
 from pathlib import Path
+
+import cv2
+import numpy as np
 
 
 
@@ -60,10 +66,15 @@ authenticator = None
 kasa_agent = KasaAgent()
 google_calendar = GoogleCalendarIntegration()
 google_gmail = GoogleGmailIntegration()
-SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SETTINGS_FILE = os.path.join(BASE_DIR, "settings.json")
+REFERENCE_IMAGE_FILE = os.path.join(BASE_DIR, "reference.jpg")
 
 DEFAULT_SETTINGS = {
     "face_auth_enabled": False, # Default OFF as requested
+    "face_reference_configured": False,
+    "backup_pin_hash": "",
+    "backup_pin_salt": "",
     "long_term_memory_enabled": True,
     "memory_locked": False,
     "tool_permissions": {
@@ -124,7 +135,40 @@ def _settings_for_client():
     public_settings["gemini_api_key_configured"] = bool(api_key)
     tapo_password = str(public_settings.pop("tapo_password", "") or "").strip()
     public_settings["tapo_password_configured"] = bool(tapo_password)
+    backup_pin_hash = str(public_settings.pop("backup_pin_hash", "") or "").strip()
+    backup_pin_salt = str(public_settings.pop("backup_pin_salt", "") or "").strip()
+    public_settings["backup_pin_configured"] = bool(backup_pin_hash and backup_pin_salt)
+    public_settings["face_reference_configured"] = bool(SETTINGS.get("face_reference_configured", False)) and os.path.exists(REFERENCE_IMAGE_FILE)
     return public_settings
+
+
+def _is_valid_backup_pin(pin):
+    return bool(re.fullmatch(r"\d{4}", str(pin or "").strip()))
+
+
+def _hash_backup_pin(pin, salt_hex=None):
+    normalized = str(pin or "").strip()
+    if not _is_valid_backup_pin(normalized):
+        raise ValueError("PIN must be exactly 4 digits.")
+
+    if salt_hex:
+        salt = bytes.fromhex(salt_hex)
+    else:
+        salt = os.urandom(16)
+        salt_hex = salt.hex()
+
+    digest = hashlib.pbkdf2_hmac("sha256", normalized.encode("utf-8"), salt, 120000)
+    return digest.hex(), salt_hex
+
+
+def _verify_backup_pin(pin, stored_hash, stored_salt):
+    if not stored_hash or not stored_salt:
+        return False
+    try:
+        candidate_hash, _ = _hash_backup_pin(pin, stored_salt)
+    except Exception:
+        return False
+    return hmac.compare_digest(candidate_hash, str(stored_hash))
 
 
 def _extract_quota_hints(error_text):
@@ -246,6 +290,9 @@ def load_settings():
             safe_settings = dict(SETTINGS)
             if safe_settings.get("gemini_api_key"):
                 safe_settings["gemini_api_key"] = "***"
+
+            # Keep setup flags consistent with current backend files.
+            SETTINGS["face_reference_configured"] = os.path.exists(REFERENCE_IMAGE_FILE)
             print(f"Loaded settings: {safe_settings}")
         except Exception as e:
             print(f"Error loading settings: {e}")
@@ -260,6 +307,7 @@ def save_settings():
 
 # Load on startup
 load_settings()
+SETTINGS["face_reference_configured"] = os.path.exists(REFERENCE_IMAGE_FILE)
 
 authenticator = None
 kasa_agent = KasaAgent(
@@ -308,7 +356,7 @@ async def connect(sid, environ):
     # Initialize Authenticator if not already done
     if authenticator is None:
         authenticator = FaceAuthenticator(
-            reference_image_path="reference.jpg",
+            reference_image_path=REFERENCE_IMAGE_FILE,
             on_status_change=on_auth_status,
             on_frame=on_auth_frame
         )
@@ -320,6 +368,9 @@ async def connect(sid, environ):
         # Check Settings for Auth
         if SETTINGS.get("face_auth_enabled", False):
             await sio.emit('auth_status', {'authenticated': False})
+            if not SETTINGS.get("face_reference_configured", False) or not os.path.exists(REFERENCE_IMAGE_FILE):
+                await sio.emit('error', {'msg': 'Face Authentication enabled but no reference face is configured. Open Settings and run Setup Face Recognition.'}, room=sid)
+                return
             # Start the auth loop in background
             asyncio.create_task(authenticator.start_authentication_loop())
         else:
@@ -1130,6 +1181,89 @@ async def get_settings(sid):
 
 
 @sio.event
+async def setup_face_recognition(sid, data):
+    payload = data or {}
+    pin = str(payload.get("pin", "") or "").strip()
+    raw_image = str(payload.get("image_base64", "") or "").strip()
+
+    if not _is_valid_backup_pin(pin):
+        await sio.emit('face_setup_result', {'ok': False, 'message': 'PIN must be exactly 4 digits.'}, room=sid)
+        return
+
+    if not raw_image:
+        await sio.emit('face_setup_result', {'ok': False, 'message': 'No camera frame received.'}, room=sid)
+        return
+
+    if raw_image.startswith("data:image") and "," in raw_image:
+        raw_image = raw_image.split(",", 1)[1]
+
+    try:
+        image_bytes = base64.b64decode(raw_image, validate=True)
+        image_np = np.frombuffer(image_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("Decoded image is empty")
+    except Exception as e:
+        await sio.emit('face_setup_result', {'ok': False, 'message': f'Invalid image payload: {str(e)}'}, room=sid)
+        return
+
+    try:
+        write_ok = await asyncio.to_thread(cv2.imwrite, REFERENCE_IMAGE_FILE, frame)
+        if not write_ok:
+            await sio.emit('face_setup_result', {'ok': False, 'message': 'Failed to save reference image.'}, room=sid)
+            return
+
+        pin_hash, pin_salt = _hash_backup_pin(pin)
+
+        SETTINGS["backup_pin_hash"] = pin_hash
+        SETTINGS["backup_pin_salt"] = pin_salt
+        SETTINGS["face_reference_configured"] = True
+        SETTINGS["face_auth_enabled"] = True
+
+        if authenticator:
+            authenticator.stop()
+            authenticator.authenticated = False
+            authenticator.reference_image_path = REFERENCE_IMAGE_FILE
+            authenticator.reference_landmarks = None
+            await asyncio.to_thread(authenticator._load_reference)
+            if authenticator.reference_landmarks is None:
+                SETTINGS["face_reference_configured"] = False
+                SETTINGS["face_auth_enabled"] = False
+                save_settings()
+                await sio.emit('settings', _settings_for_client())
+                await sio.emit('face_setup_result', {'ok': False, 'message': 'No face detected in the captured image. Please retry with better lighting and framing.'}, room=sid)
+                return
+
+        save_settings()
+        await sio.emit('settings', _settings_for_client())
+        await sio.emit('face_setup_result', {'ok': True, 'message': 'Face reference and backup PIN were saved.'}, room=sid)
+    except Exception as e:
+        await sio.emit('face_setup_result', {'ok': False, 'message': f'Setup failed: {str(e)}'}, room=sid)
+
+
+@sio.event
+async def verify_backup_pin(sid, data):
+    payload = data or {}
+    pin = str(payload.get("pin", "") or "").strip()
+
+    stored_hash = str(SETTINGS.get("backup_pin_hash", "") or "").strip()
+    stored_salt = str(SETTINGS.get("backup_pin_salt", "") or "").strip()
+    if not stored_hash or not stored_salt:
+        await sio.emit('backup_pin_result', {'ok': False, 'message': 'No backup PIN configured yet.'}, room=sid)
+        return
+
+    if _verify_backup_pin(pin, stored_hash, stored_salt):
+        if authenticator:
+            authenticator.stop()
+            authenticator.authenticated = True
+        await sio.emit('auth_status', {'authenticated': True})
+        await sio.emit('backup_pin_result', {'ok': True, 'message': 'PIN verified.'}, room=sid)
+        return
+
+    await sio.emit('backup_pin_result', {'ok': False, 'message': 'Invalid PIN.'}, room=sid)
+
+
+@sio.event
 async def connect_google_workspace(sid, data=None):
     payload = data or {}
     force_reauth = bool(payload.get("force_reauth", False))
@@ -1181,9 +1315,14 @@ async def update_settings(sid, data):
             audio_loop.update_permissions(SETTINGS["tool_permissions"])
             
     if "face_auth_enabled" in data:
-        SETTINGS["face_auth_enabled"] = data["face_auth_enabled"]
+        requested = bool(data["face_auth_enabled"])
+        if requested and not SETTINGS.get("face_reference_configured", False):
+            await sio.emit('error', {'msg': 'Cannot enable Face Authentication without setup. Please run Setup Face Recognition first.'}, room=sid)
+            SETTINGS["face_auth_enabled"] = False
+        else:
+            SETTINGS["face_auth_enabled"] = requested
         # If turned OFF, maybe emit auth status true?
-        if not data["face_auth_enabled"]:
+        if not SETTINGS["face_auth_enabled"]:
              await sio.emit('auth_status', {'authenticated': True})
              # Stop auth loop if running?
              if authenticator:

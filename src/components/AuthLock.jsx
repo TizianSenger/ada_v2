@@ -5,6 +5,9 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
     const [frameSrc, setFrameSrc] = useState(null);
     const [message, setMessage] = useState("Initializing Security...");
     const [isUnlocking, setIsUnlocking] = useState(false);
+    const [pinInput, setPinInput] = useState('');
+    const [pinMessage, setPinMessage] = useState('');
+    const [isPinChecking, setIsPinChecking] = useState(false);
 
     useEffect(() => {
         if (!socket) return;
@@ -19,6 +22,9 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
                 // Wait for animation then notify parent
                 setTimeout(() => {
                     onAuthenticated(true);
+                    if (onAnimationComplete) {
+                        onAnimationComplete();
+                    }
                 }, 2000); // 2 seconds animation
             } else if (!data.authenticated && !isUnlocking) {
                 setMessage("Look at the camera to unlock.");
@@ -29,14 +35,37 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
             setFrameSrc(`data:image/jpeg;base64,${data.image}`);
         };
 
+        const handleBackupPinResult = (data) => {
+            const ok = Boolean(data?.ok);
+            const msg = String(data?.message || '').trim();
+            setIsPinChecking(false);
+            setPinMessage(msg || (ok ? 'PIN accepted.' : 'Invalid PIN.'));
+            if (ok) {
+                setPinInput('');
+            }
+        };
+
         socket.on('auth_status', handleAuthStatus);
         socket.on('auth_frame', handleAuthFrame);
+        socket.on('backup_pin_result', handleBackupPinResult);
 
         return () => {
             socket.off('auth_status', handleAuthStatus);
             socket.off('auth_frame', handleAuthFrame);
+            socket.off('backup_pin_result', handleBackupPinResult);
         };
     }, [socket, onAuthenticated, onAnimationComplete, isUnlocking]);
+
+    const submitPinUnlock = () => {
+        const pin = String(pinInput || '').trim();
+        if (!/^\d{4}$/.test(pin)) {
+            setPinMessage('Enter your 4-digit backup PIN.');
+            return;
+        }
+        setIsPinChecking(true);
+        setPinMessage('Verifying backup PIN...');
+        socket.emit('verify_backup_pin', { pin });
+    };
 
     const themeColor = isUnlocking ? 'text-green-500' : 'text-cyan-500';
     const borderColor = isUnlocking ? 'border-green-500' : 'border-cyan-500';
@@ -89,6 +118,36 @@ const AuthLock = ({ socket, onAuthenticated, onAnimationComplete }) => {
                 <div className={`text-sm tracking-widest ${isUnlocking ? 'text-green-300' : 'text-cyan-300'} animate-pulse transition-colors duration-500`}>
                     {message}
                 </div>
+
+                {!isUnlocking && (
+                    <div className="w-full max-w-xs pt-2 border-t border-cyan-900/30">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-500/70 mb-2 text-center">Backup PIN Unlock</div>
+                        <div className="flex gap-2">
+                            <input
+                                type="password"
+                                inputMode="numeric"
+                                maxLength={4}
+                                value={pinInput}
+                                onChange={(e) => setPinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        submitPinUnlock();
+                                    }
+                                }}
+                                placeholder="4-digit PIN"
+                                className="flex-1 bg-black/70 border border-cyan-800 rounded px-2 py-1.5 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                            />
+                            <button
+                                onClick={submitPinUnlock}
+                                disabled={isPinChecking}
+                                className="px-3 py-1.5 text-[10px] uppercase tracking-widest rounded bg-cyan-800/80 hover:bg-cyan-700 text-white disabled:opacity-50"
+                            >
+                                Unlock
+                            </button>
+                        </div>
+                        {pinMessage && <div className="mt-2 text-[10px] text-cyan-300/80 text-center">{pinMessage}</div>}
+                    </div>
+                )}
             </div>
 
             {/* Keyframe for scan animation */}

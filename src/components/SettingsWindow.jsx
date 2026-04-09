@@ -133,6 +133,14 @@ const SettingsWindow = ({
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
     const [longTermMemoryEnabled, setLongTermMemoryEnabled] = useState(true);
+    const [faceSetupPin, setFaceSetupPin] = useState('');
+    const [faceSetupPinConfirm, setFaceSetupPinConfirm] = useState('');
+    const [faceSetupBusy, setFaceSetupBusy] = useState(false);
+    const [faceSetupMessage, setFaceSetupMessage] = useState('');
+    const [isFaceSetupPopupOpen, setIsFaceSetupPopupOpen] = useState(false);
+    const [faceCaptureCountdown, setFaceCaptureCountdown] = useState(5);
+    const [backupPinConfigured, setBackupPinConfigured] = useState(false);
+    const [faceReferenceConfigured, setFaceReferenceConfigured] = useState(false);
     const [apiKeyInput, setApiKeyInput] = useState('');
     const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
     const [apiKeyMessage, setApiKeyMessage] = useState('');
@@ -151,6 +159,10 @@ const SettingsWindow = ({
     const [windowPos, setWindowPos] = useState({ x: 40, y: 84 });
 
     const dragRef = useRef({ active: false, offsetX: 0, offsetY: 0 });
+    const faceSetupVideoRef = useRef(null);
+    const faceSetupStreamRef = useRef(null);
+    const faceSetupTimerRef = useRef(null);
+    const pendingFaceSetupPinRef = useRef('');
 
     const groupedTools = useMemo(() => {
         const byId = new Map(TOOLS.map((tool) => [tool.id, tool]));
@@ -188,6 +200,12 @@ const SettingsWindow = ({
                     setFaceAuthEnabled(settings.face_auth_enabled);
                     localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
                 }
+                if (typeof settings.backup_pin_configured !== 'undefined') {
+                    setBackupPinConfigured(Boolean(settings.backup_pin_configured));
+                }
+                if (typeof settings.face_reference_configured !== 'undefined') {
+                    setFaceReferenceConfigured(Boolean(settings.face_reference_configured));
+                }
                 if (typeof settings.long_term_memory_enabled !== 'undefined') {
                     setLongTermMemoryEnabled(Boolean(settings.long_term_memory_enabled));
                 }
@@ -206,16 +224,42 @@ const SettingsWindow = ({
             setGoogleConnecting(false);
         };
 
+        const handleFaceSetupResult = (result) => {
+            const ok = Boolean(result?.ok);
+            const msg = String(result?.message || '').trim() || (ok ? 'Face setup completed.' : 'Face setup failed.');
+            setFaceSetupBusy(false);
+            setFaceSetupMessage(msg);
+            if (ok) {
+                setFaceSetupPin('');
+                setFaceSetupPinConfirm('');
+            }
+        };
+
         socket.on('settings', handleSettings);
         socket.on('google_workspace_connection_result', handleGoogleConnectionResult);
+        socket.on('face_setup_result', handleFaceSetupResult);
         // Also listen for legacy tool_permissions if needed, but 'settings' covers it
         // socket.on('tool_permissions', handlePermissions); 
 
         return () => {
             socket.off('settings', handleSettings);
             socket.off('google_workspace_connection_result', handleGoogleConnectionResult);
+            socket.off('face_setup_result', handleFaceSetupResult);
         };
     }, [socket]);
+
+    useEffect(() => {
+        return () => {
+            if (faceSetupTimerRef.current) {
+                clearInterval(faceSetupTimerRef.current);
+                faceSetupTimerRef.current = null;
+            }
+            if (faceSetupStreamRef.current) {
+                faceSetupStreamRef.current.getTracks().forEach((track) => track.stop());
+                faceSetupStreamRef.current = null;
+            }
+        };
+    }, []);
 
     useEffect(() => {
         const handleMouseMove = (e) => {
@@ -265,6 +309,120 @@ const SettingsWindow = ({
         setFaceAuthEnabled(newVal); // Optimistic Update
         localStorage.setItem('face_auth_enabled', newVal);
         socket.emit('update_settings', { face_auth_enabled: newVal });
+    };
+
+    const stopFaceSetupCapture = () => {
+        if (faceSetupTimerRef.current) {
+            clearInterval(faceSetupTimerRef.current);
+            faceSetupTimerRef.current = null;
+        }
+        if (faceSetupStreamRef.current) {
+            faceSetupStreamRef.current.getTracks().forEach((track) => track.stop());
+            faceSetupStreamRef.current = null;
+        }
+    };
+
+    const closeFaceSetupPopup = () => {
+        stopFaceSetupCapture();
+        setIsFaceSetupPopupOpen(false);
+    };
+
+    const captureFaceFromPopup = () => {
+        const video = faceSetupVideoRef.current;
+        if (!video) {
+            setFaceSetupBusy(false);
+            setFaceSetupMessage('Face setup failed: Camera preview is not available.');
+            closeFaceSetupPopup();
+            return;
+        }
+
+        const width = video.videoWidth || 640;
+        const height = video.videoHeight || 480;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+            setFaceSetupBusy(false);
+            setFaceSetupMessage('Face setup failed: Cannot access canvas context.');
+            closeFaceSetupPopup();
+            return;
+        }
+
+        ctx.drawImage(video, 0, 0, width, height);
+        const imageDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+
+        closeFaceSetupPopup();
+        socket.emit('setup_face_recognition', {
+            image_base64: imageDataUrl,
+            pin: pendingFaceSetupPinRef.current,
+        });
+        setFaceSetupMessage('Saving face reference and PIN...');
+    };
+
+    const startFaceCaptureCountdown = () => {
+        setFaceCaptureCountdown(5);
+        faceSetupTimerRef.current = setInterval(() => {
+            setFaceCaptureCountdown((prev) => {
+                if (prev <= 1) {
+                    if (faceSetupTimerRef.current) {
+                        clearInterval(faceSetupTimerRef.current);
+                        faceSetupTimerRef.current = null;
+                    }
+                    captureFaceFromPopup();
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+    };
+
+    const setupFaceRecognition = async () => {
+        const pin = String(faceSetupPin || '').trim();
+        const pinConfirm = String(faceSetupPinConfirm || '').trim();
+
+        if (!/^\d{4}$/.test(pin)) {
+            setFaceSetupMessage('Backup PIN must be exactly 4 digits.');
+            return;
+        }
+        if (pin !== pinConfirm) {
+            setFaceSetupMessage('PIN confirmation does not match.');
+            return;
+        }
+
+        setFaceSetupBusy(true);
+        setFaceSetupMessage('Opening camera preview...');
+
+        try {
+            const constraints = selectedWebcamId
+                ? { video: { deviceId: { exact: selectedWebcamId } } }
+                : { video: true };
+
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            faceSetupStreamRef.current = stream;
+            pendingFaceSetupPinRef.current = pin;
+            setFaceCaptureCountdown(5);
+            setIsFaceSetupPopupOpen(true);
+
+            // Wait for popup video element to mount.
+            await new Promise((resolve) => setTimeout(resolve, 40));
+
+            if (!faceSetupVideoRef.current) {
+                throw new Error('Camera preview could not be initialized.');
+            }
+
+            faceSetupVideoRef.current.srcObject = stream;
+            faceSetupVideoRef.current.muted = true;
+            faceSetupVideoRef.current.playsInline = true;
+            await faceSetupVideoRef.current.play();
+
+            setFaceSetupMessage('Align your face. Snapshot in 5 seconds...');
+            startFaceCaptureCountdown();
+        } catch (error) {
+            setFaceSetupBusy(false);
+            setFaceSetupMessage(`Face setup failed: ${error?.message || String(error)}`);
+            closeFaceSetupPopup();
+        }
     };
 
     const toggleLongTermMemory = () => {
@@ -341,6 +499,43 @@ const SettingsWindow = ({
                     enabled={faceAuthEnabled}
                     onToggle={toggleFaceAuth}
                 />
+                <div className="mt-3 bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <div className="text-[10px] text-cyan-500/80 uppercase">Setup Face Recognition</div>
+                    <p className="text-[10px] text-cyan-500/70 mt-1">
+                        Captures one face reference image from your selected webcam and stores a backup unlock PIN.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                        <input
+                            type="password"
+                            maxLength={4}
+                            value={faceSetupPin}
+                            onChange={(e) => setFaceSetupPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            placeholder="4-digit PIN"
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                        <input
+                            type="password"
+                            maxLength={4}
+                            value={faceSetupPinConfirm}
+                            onChange={(e) => setFaceSetupPinConfirm(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                            placeholder="Confirm PIN"
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                    </div>
+                    <div className="flex items-center justify-between mt-2 gap-2">
+                        <span className="text-[10px] text-cyan-500/70">
+                            Face: {faceReferenceConfigured ? 'configured' : 'not configured'} | PIN: {backupPinConfigured ? 'configured' : 'not configured'}
+                        </span>
+                        <button
+                            onClick={setupFaceRecognition}
+                            disabled={faceSetupBusy}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                        >
+                            {faceSetupBusy ? 'Setting up...' : 'Setup Face + PIN'}
+                        </button>
+                    </div>
+                    {faceSetupMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{faceSetupMessage}</p>}
+                </div>
                 <div className="mt-2">
                     <ToggleRow
                         label="Long-Term Memory"
@@ -621,58 +816,98 @@ const SettingsWindow = ({
     };
 
     return (
-        <div
-            className="fixed bg-black/92 border border-cyan-500/50 rounded-lg z-50 backdrop-blur-xl shadow-[0_0_35px_rgba(6,182,212,0.25)] overflow-hidden"
-            style={{
-                left: windowPos.x,
-                top: windowPos.y,
-                width: 'min(960px, calc(100vw - 32px))',
-                height: 'min(760px, calc(100vh - 32px))',
-            }}
-        >
+        <>
             <div
-                className="h-[52px] px-4 border-b border-cyan-900/50 flex items-center justify-between bg-black/65 cursor-move"
-                onMouseDown={handleDragStart}
+                className="fixed bg-black/92 border border-cyan-500/50 rounded-lg z-50 backdrop-blur-xl shadow-[0_0_35px_rgba(6,182,212,0.25)] overflow-hidden"
+                style={{
+                    left: windowPos.x,
+                    top: windowPos.y,
+                    width: 'min(960px, calc(100vw - 32px))',
+                    height: 'min(760px, calc(100vh - 32px))',
+                }}
             >
-                <div>
-                    <h2 className="text-cyan-300 font-bold text-sm uppercase tracking-wider">Settings</h2>
-                    <p className="text-[10px] text-cyan-600/80 mt-0.5">Drag this bar to move the window</p>
+                <div
+                    className="h-[52px] px-4 border-b border-cyan-900/50 flex items-center justify-between bg-black/65 cursor-move"
+                    onMouseDown={handleDragStart}
+                >
+                    <div>
+                        <h2 className="text-cyan-300 font-bold text-sm uppercase tracking-wider">Settings</h2>
+                        <p className="text-[10px] text-cyan-600/80 mt-0.5">Drag this bar to move the window</p>
+                    </div>
+                    <button onClick={onClose} className="text-cyan-600 hover:text-cyan-300 transition-colors">
+                        <X size={18} />
+                    </button>
                 </div>
-                <button onClick={onClose} className="text-cyan-600 hover:text-cyan-300 transition-colors">
-                    <X size={18} />
-                </button>
+
+                <div className="h-[44px] px-4 border-b border-cyan-900/40 flex items-center gap-2 bg-black/35">
+                    <button
+                        onClick={() => setActiveTab('general')}
+                        className={`${TAB_BUTTON} ${activeTab === 'general' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                    >
+                        General
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('devices')}
+                        className={`${TAB_BUTTON} ${activeTab === 'devices' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                    >
+                        Devices
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('tools')}
+                        className={`${TAB_BUTTON} ${activeTab === 'tools' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                    >
+                        Tool Permissions
+                    </button>
+                </div>
+
+                <div
+                    className="px-4 py-4 overflow-y-auto scrollbar-hide"
+                    style={{ height: `calc(100% - ${HEADER_HEIGHT + 44}px)` }}
+                >
+                    {activeTab === 'general' && renderGeneralTab()}
+                    {activeTab === 'devices' && renderDevicesTab()}
+                    {activeTab === 'tools' && renderToolsTab()}
+                </div>
             </div>
 
-            <div className="h-[44px] px-4 border-b border-cyan-900/40 flex items-center gap-2 bg-black/35">
-                <button
-                    onClick={() => setActiveTab('general')}
-                    className={`${TAB_BUTTON} ${activeTab === 'general' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
-                >
-                    General
-                </button>
-                <button
-                    onClick={() => setActiveTab('devices')}
-                    className={`${TAB_BUTTON} ${activeTab === 'devices' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
-                >
-                    Devices
-                </button>
-                <button
-                    onClick={() => setActiveTab('tools')}
-                    className={`${TAB_BUTTON} ${activeTab === 'tools' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
-                >
-                    Tool Permissions
-                </button>
-            </div>
-
-            <div
-                className="px-4 py-4 overflow-y-auto scrollbar-hide"
-                style={{ height: `calc(100% - ${HEADER_HEIGHT + 44}px)` }}
-            >
-                {activeTab === 'general' && renderGeneralTab()}
-                {activeTab === 'devices' && renderDevicesTab()}
-                {activeTab === 'tools' && renderToolsTab()}
-            </div>
-        </div>
+            {isFaceSetupPopupOpen && (
+                <div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-xl bg-black/95 border border-cyan-500/50 rounded-xl shadow-[0_0_35px_rgba(6,182,212,0.25)] overflow-hidden">
+                        <div className="px-4 py-3 border-b border-cyan-900/50 flex items-center justify-between">
+                            <h3 className="text-cyan-300 text-sm uppercase tracking-wider">Face Setup Capture</h3>
+                            <button
+                                onClick={() => {
+                                    setFaceSetupBusy(false);
+                                    setFaceSetupMessage('Face setup canceled.');
+                                    closeFaceSetupPopup();
+                                }}
+                                className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-900/60 hover:bg-cyan-800/70 text-cyan-200"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                        <div className="p-4">
+                            <div className="relative rounded-lg border border-cyan-900/40 overflow-hidden bg-black">
+                                <video
+                                    ref={faceSetupVideoRef}
+                                    autoPlay
+                                    muted
+                                    playsInline
+                                    className="w-full h-auto max-h-[420px] object-cover"
+                                />
+                                <div className="absolute inset-0 pointer-events-none border-[3px] border-cyan-400/30" />
+                                <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/70 border border-cyan-400/40 rounded-full px-4 py-1 text-cyan-200 text-lg font-bold tracking-widest">
+                                    {faceCaptureCountdown}
+                                </div>
+                            </div>
+                            <p className="mt-3 text-xs text-cyan-300/85 text-center">
+                                Bitte ruhig in die Kamera schauen. Aufnahme erfolgt automatisch nach 5 Sekunden.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
     );
 };
 
