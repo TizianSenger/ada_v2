@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     CloudSun,
     CalendarDays,
     Mail,
+    MessageCircle,
     Printer,
     Lightbulb,
     Gauge,
@@ -72,6 +73,7 @@ const ModeHeader = ({ activeMode }) => {
         { id: 'weather', label: 'Wetter', Icon: CloudSun },
         { id: 'calendar', label: 'Kalender', Icon: CalendarDays },
         { id: 'mail', label: 'Mail', Icon: Mail },
+        { id: 'whatsapp', label: 'WhatsApp', Icon: MessageCircle },
         { id: 'route', label: 'Route', Icon: Route },
         { id: 'stock', label: 'Stock', Icon: LineChart },
         { id: 'system', label: 'System', Icon: ShieldCheck },
@@ -222,6 +224,107 @@ const EmailListView = ({ payload }) => {
                         <div className="text-cyan-100/70 text-xs mt-1 truncate">Von: {msg.from || '-'}</div>
                         <div className="text-cyan-100/60 text-xs truncate">{msg.date || '-'}</div>
                         <div className="text-cyan-300/80 text-xs mt-1 line-clamp-3">{msg.snippet || ''}</div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const WhatsappView = ({ payload }) => {
+    const data = payload?.whatsapp || {};
+    const chats = Array.isArray(data?.chats) ? data.chats : [];
+    const webPreview = typeof data?.webPreview === 'string' ? data.webPreview : '';
+    const openEmbeddedWeb = data?.openEmbeddedWeb === true;
+    const webviewReloadKey = data?.webviewReloadKey || 'default';
+    const unreadCount = Number.isFinite(Number(data?.unreadCount)) ? Number(data.unreadCount) : 0;
+    const status = String(data?.status || 'unknown');
+    const webviewRef = useRef(null);
+
+    useEffect(() => {
+        if (!openEmbeddedWeb || !webviewRef.current) return;
+
+        const view = webviewRef.current;
+        const applyZoom = () => {
+            try {
+                // Zoom out slightly so WhatsApp fits better without horizontal scrolling.
+                view.setZoomFactor(0.76);
+            } catch {
+                // Ignore if webview API is temporarily unavailable.
+            }
+        };
+
+        view.addEventListener('dom-ready', applyZoom);
+        return () => {
+            view.removeEventListener('dom-ready', applyZoom);
+        };
+    }, [openEmbeddedWeb, webviewReloadKey]);
+    const statusLabel = status === 'connected'
+        ? 'Connected'
+        : status === 'login_required'
+            ? 'Login Required'
+            : status === 'disabled'
+                ? 'Disabled'
+                : 'Loading';
+
+    const statusClass = status === 'connected'
+        ? 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10'
+        : status === 'login_required'
+            ? 'text-amber-300 border-amber-500/40 bg-amber-500/10'
+            : 'text-cyan-300 border-cyan-500/40 bg-cyan-500/10';
+
+    return (
+        <div className="h-full w-full flex flex-col overflow-hidden">
+            <div className="px-3 py-2 border-b border-cyan-900/40 bg-black/30">
+                <div className="text-cyan-300 text-xs uppercase tracking-wider font-bold">{payload?.title || 'WhatsApp Inbox'}</div>
+                <div className="mt-1 flex items-center gap-2">
+                    <span className={`text-[10px] px-2 py-0.5 rounded border ${statusClass}`}>{statusLabel}</span>
+                    <span className="text-[10px] text-cyan-200/80">Unread: {unreadCount}</span>
+                </div>
+                <div className="text-[10px] text-cyan-500/70 mt-1">
+                    Last Update: {data?.timestamp ? formatTime(data.timestamp) : '-'}
+                </div>
+            </div>
+            <div className={`flex-1 ${openEmbeddedWeb ? 'overflow-hidden p-0' : 'overflow-auto scrollbar-hide p-3 space-y-2'}`}>
+                {openEmbeddedWeb && (
+                    <div className="h-full w-full border-t border-cyan-900/30 bg-black/60 overflow-hidden">
+                        <webview
+                            ref={webviewRef}
+                            key={String(webviewReloadKey)}
+                            src="https://web.whatsapp.com"
+                            partition="persist:whatsapp"
+                            useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                            allowpopups="false"
+                            style={{ width: '100%', height: '100%', border: '0', background: '#0b141a' }}
+                        />
+                    </div>
+                )}
+                {!openEmbeddedWeb && webPreview && (
+                    <div className="border border-cyan-900/40 rounded-lg p-1 bg-black/45 overflow-hidden">
+                        <img
+                            src={webPreview}
+                            alt="WhatsApp Web Preview"
+                            className="w-full h-auto max-h-48 object-cover rounded"
+                        />
+                    </div>
+                )}
+                {!openEmbeddedWeb && chats.length === 0 && unreadCount > 0 && (
+                    <div className="text-xs text-cyan-400/70">
+                        Ungelesene Nachrichten erkannt, aber Chat-Text konnte noch nicht geladen werden. Lass WhatsApp kurz aktiv und versuche es erneut.
+                    </div>
+                )}
+                {!openEmbeddedWeb && chats.map((chat, idx) => (
+                    <div key={`${chat.name || 'chat'}-${idx}`} className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="flex items-start justify-between gap-2">
+                            <div className="text-cyan-100/90 text-xs font-semibold truncate">{chat.name || 'Unknown'}</div>
+                            {Number(chat.unread) > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-emerald-500/40 bg-emerald-500/15 text-emerald-300">
+                                    {chat.unread}
+                                </span>
+                            )}
+                        </div>
+                        {chat.meta && <div className="text-[10px] text-cyan-500/70 mt-1 truncate">{chat.meta}</div>}
+                        {chat.preview && <div className="text-[11px] text-cyan-200/80 mt-1 line-clamp-2">{chat.preview}</div>}
                     </div>
                 ))}
             </div>
@@ -572,6 +675,7 @@ const SystemCheckView = ({ payload, variant = 'default', meshOnly = false, showM
 
         // External services
         if (text.includes('printer')) return Printer;
+        if (text.includes('whatsapp')) return MessageCircle;
         if (text.includes('weather')) return CloudSun;
         if (text.includes('stock')) return LineChart;
         if (text.includes('route')) return Route;
@@ -817,6 +921,7 @@ const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
         if (payload.type === 'weather') return 'weather';
         if (payload.type === 'calendar') return 'calendar';
         if (payload.type === 'email' || payload.type === 'email_list') return 'mail';
+        if (payload.type === 'whatsapp') return 'whatsapp';
         if (payload.type === 'route') return 'route';
         if (payload.type === 'stock') return 'stock';
         if (payload.type === 'system_check') return 'system';
@@ -832,6 +937,7 @@ const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
     if (payload?.type === 'calendar') content = <CalendarView payload={payload} />;
     if (payload?.type === 'email') content = <EmailView payload={payload} />;
     if (payload?.type === 'email_list') content = <EmailListView payload={payload} />;
+    if (payload?.type === 'whatsapp') content = <WhatsappView payload={payload} />;
     if (payload?.type === 'route') content = <RouteView payload={payload} />;
     if (payload?.type === 'stock') content = <StockView payload={payload} />;
     if (payload?.type === 'system_check') {

@@ -46,6 +46,8 @@ function App() {
         return localStorage.getItem('face_auth_enabled') === 'true';
     });
     const [showLockButton, setShowLockButton] = useState(true);
+    const [whatsappMonitorEnabled, setWhatsappMonitorEnabled] = useState(false);
+    const [whatsappNotifyEnabled, setWhatsappNotifyEnabled] = useState(true);
 
 
     const [isConnected, setIsConnected] = useState(true); // Power state DEFAULT ON
@@ -176,6 +178,16 @@ function App() {
     const stockViewQueueRef = useRef([]);
     const stockViewTimerRef = useRef(null);
     const stockViewActiveRef = useRef(false);
+    const leftPanelViewRef = useRef(null);
+    const whatsappMonitorEnabledRef = useRef(false);
+    const whatsappUnreadRef = useRef(0);
+    const whatsappDataRef = useRef({
+        status: 'disabled',
+        unreadCount: 0,
+        chats: [],
+        title: 'WhatsApp',
+        timestamp: null,
+    });
 
     // Smoothing and Snapping Refs
     const smoothedCursorPosRef = useRef({ x: 0, y: 0 });
@@ -192,8 +204,20 @@ function App() {
         isHandTrackingEnabledRef.current = isHandTrackingEnabled;
         cursorSensitivityRef.current = cursorSensitivity;
         isCameraFlippedRef.current = isCameraFlipped;
+        whatsappMonitorEnabledRef.current = whatsappMonitorEnabled;
         console.log("[Ref Sync] Camera flipped ref updated to:", isCameraFlipped);
-    }, [isModularMode, elementPositions, isHandTrackingEnabled, cursorSensitivity, isCameraFlipped]);
+    }, [
+        isModularMode,
+        elementPositions,
+        isHandTrackingEnabled,
+        cursorSensitivity,
+        isCameraFlipped,
+        whatsappMonitorEnabled,
+    ]);
+
+    useEffect(() => {
+        leftPanelViewRef.current = leftPanelView;
+    }, [leftPanelView]);
 
     // Live Clock Update
     useEffect(() => {
@@ -442,6 +466,12 @@ function App() {
             if (typeof settings.show_lock_button !== 'undefined') {
                 setShowLockButton(Boolean(settings.show_lock_button));
             }
+            if (typeof settings.whatsapp_monitor_enabled !== 'undefined') {
+                setWhatsappMonitorEnabled(Boolean(settings.whatsapp_monitor_enabled));
+            }
+            if (typeof settings.whatsapp_notify_enabled !== 'undefined') {
+                setWhatsappNotifyEnabled(Boolean(settings.whatsapp_notify_enabled));
+            }
         });
         socket.on('error', (data) => {
             if (data?.msg === 'Model session ready') {
@@ -642,6 +672,88 @@ function App() {
             }
         });
 
+        socket.on('whatsapp_tool_request', async (data) => {
+            const payload = data || {};
+            const requestId = String(payload.request_id || '').trim();
+            if (!requestId) {
+                return;
+            }
+
+            const maxChatsRaw = Number(payload.max_chats);
+            const maxChats = Number.isFinite(maxChatsRaw)
+                ? Math.max(1, Math.min(30, Math.trunc(maxChatsRaw)))
+                : 20;
+
+            const wantsOpenDetail = Boolean(payload.open_detail);
+            const monitorEnabled = Boolean(whatsappMonitorEnabledRef.current);
+
+            let source = whatsappDataRef.current || {};
+            if (ipcRenderer && typeof ipcRenderer.invoke === 'function') {
+                try {
+                    const fresh = await ipcRenderer.invoke('whatsapp-read-snapshot', {
+                        showWindow: false,
+                        includePreviewImage: wantsOpenDetail,
+                        maxChats,
+                    });
+                    if (fresh && typeof fresh === 'object') {
+                        source = fresh;
+                        whatsappDataRef.current = fresh;
+                        whatsappUnreadRef.current = Number.isFinite(Number(fresh.unreadCount)) ? Number(fresh.unreadCount) : whatsappUnreadRef.current;
+                    }
+                } catch (err) {
+                    console.warn('[WhatsApp] Failed to fetch fresh snapshot for tool request:', err?.message || err);
+                }
+            }
+
+            const chats = Array.isArray(source.chats) ? source.chats.slice(0, maxChats) : [];
+            const whatsapp = {
+                status: source.status || 'disabled',
+                unreadCount: Number.isFinite(Number(source.unreadCount)) ? Number(source.unreadCount) : 0,
+                chats,
+                title: source.title || 'WhatsApp',
+                timestamp: source.timestamp || Date.now(),
+                debug: source.debug,
+                webPreview: source.webPreview || null,
+            };
+
+            let openedDetail = false;
+            let reason = '';
+
+            if (wantsOpenDetail) {
+                if (!monitorEnabled) {
+                    reason = 'monitor_disabled';
+                } else {
+                    setLeftPanelView({
+                        type: 'whatsapp',
+                        title: 'WhatsApp Inbox',
+                        whatsapp: {
+                            ...whatsapp,
+                            openEmbeddedWeb: true,
+                            webviewReloadKey: Date.now(),
+                        },
+                    });
+                    openedDetail = true;
+                }
+            }
+
+            socket.emit('whatsapp_tool_response', {
+                request_id: requestId,
+                ok: true,
+                opened_detail: openedDetail,
+                reason,
+                monitor_enabled: monitorEnabled,
+                detail_enabled: true,
+                whatsapp: {
+                    status: whatsapp.status,
+                    unreadCount: whatsapp.unreadCount,
+                    chats: whatsapp.chats,
+                    title: whatsapp.title,
+                    timestamp: whatsapp.timestamp,
+                    debug: whatsapp.debug,
+                },
+            });
+        });
+
         // Track printer count for toolbar display
         socket.on('printer_list', (list) => {
             console.log('[PRINTERS] Count:', list.length);
@@ -770,6 +882,7 @@ function App() {
             socket.off('quota_status');
             socket.off('error');
             socket.off('left_panel_view');
+            socket.off('whatsapp_tool_request');
 
             if (stockViewTimerRef.current) {
                 clearTimeout(stockViewTimerRef.current);
@@ -782,6 +895,61 @@ function App() {
             stopVideo();
         };
     }, []);
+
+    useEffect(() => {
+        ipcRenderer.send('whatsapp-config', {
+            enabled: whatsappMonitorEnabled,
+            notifyEnabled: whatsappNotifyEnabled,
+        });
+
+        if (!whatsappMonitorEnabled && leftPanelViewRef.current?.type === 'whatsapp') {
+            setLeftPanelView({ type: 'clear', title: 'Detail View' });
+        }
+    }, [whatsappMonitorEnabled, whatsappNotifyEnabled]);
+
+    useEffect(() => {
+        const handleWhatsappStatus = (_event, data) => {
+            const payload = data || {
+                status: 'disabled',
+                unreadCount: 0,
+                chats: [],
+                title: 'WhatsApp',
+                timestamp: Date.now(),
+            };
+
+            const unread = Number.isFinite(Number(payload.unreadCount)) ? Number(payload.unreadCount) : 0;
+            whatsappUnreadRef.current = unread;
+            whatsappDataRef.current = payload;
+
+            if (!whatsappMonitorEnabled) {
+                return;
+            }
+
+            const currentType = leftPanelViewRef.current?.type;
+            // Never auto-open WhatsApp on startup/status updates; only refresh when already visible.
+            const shouldPushToDetail = currentType === 'whatsapp';
+            if (!shouldPushToDetail) {
+                return;
+            }
+
+            setLeftPanelView({
+                type: 'whatsapp',
+                title: 'WhatsApp Inbox',
+                whatsapp: {
+                    ...payload,
+                    webPreview: leftPanelViewRef.current?.whatsapp?.webPreview || null,
+                    openEmbeddedWeb: leftPanelViewRef.current?.whatsapp?.openEmbeddedWeb === true,
+                    webviewReloadKey: leftPanelViewRef.current?.whatsapp?.webviewReloadKey || null,
+                },
+            });
+        };
+
+        ipcRenderer.on('whatsapp-status', handleWhatsappStatus);
+
+        return () => {
+            ipcRenderer.removeListener('whatsapp-status', handleWhatsappStatus);
+        };
+    }, [whatsappMonitorEnabled]);
 
     // Initial check in case we are already connected (fix race condition)
     useEffect(() => {

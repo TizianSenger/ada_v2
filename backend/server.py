@@ -18,6 +18,7 @@ import re
 import hashlib
 import hmac
 import base64
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -67,6 +68,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 audio_loop = None
 loop_task = None
 audio_stop_lock = asyncio.Lock()
+whatsapp_tool_requests = {}
 authenticator = None
 kasa_agent = KasaAgent()
 google_calendar = GoogleCalendarIntegration()
@@ -107,6 +109,8 @@ DEFAULT_SETTINGS = {
         "get_stock_quote": True,
         "get_stock_news": True,
         "route_plan": True,
+        "get_whatsapp_unread": True,
+        "show_whatsapp_detail_view": True,
         "clear_detail_view": True,
         "system_check": True,
         "search_memory": True,
@@ -133,6 +137,9 @@ DEFAULT_SETTINGS = {
     "voice_name": "Kore",
     "camera_flipped": False, # Invert cursor horizontal direction
     "show_lock_button": True,
+    "whatsapp_monitor_enabled": False,
+    "whatsapp_notify_enabled": True,
+    "whatsapp_show_detail_view": True,
     "gemini_api_key": "",
     "finnhub_api_key": ""
 }
@@ -399,9 +406,21 @@ async def connect(sid, environ):
 async def disconnect(sid):
     print(f"Client disconnected: {sid}")
 
+
+@sio.event
+async def whatsapp_tool_response(sid, data=None):
+    payload = data or {}
+    request_id = str(payload.get("request_id", "") or "").strip()
+    if not request_id:
+        return
+
+    future = whatsapp_tool_requests.pop(request_id, None)
+    if future and not future.done():
+        future.set_result(payload)
+
 @sio.event
 async def start_audio(sid, data=None):
-    global audio_loop, loop_task
+    global audio_loop, loop_task, whatsapp_tool_requests
     
     # Optional: Block if not authenticated
     # Only block if auth is ENABLED and not authenticated
@@ -499,6 +518,30 @@ async def start_audio(sid, data=None):
     def on_tool_view(data):
         asyncio.create_task(sio.emit('left_panel_view', data, room=sid))
 
+    # Callback for ADA tool calls that need live WhatsApp data from renderer/Electron.
+    async def on_whatsapp_tool_request(open_detail=False, max_chats=20):
+        request_id = str(uuid.uuid4())
+        future = asyncio.get_running_loop().create_future()
+        whatsapp_tool_requests[request_id] = future
+
+        payload = {
+            "request_id": request_id,
+            "open_detail": bool(open_detail),
+            "max_chats": int(max_chats or 20),
+        }
+
+        await sio.emit('whatsapp_tool_request', payload, room=sid)
+
+        try:
+            response = await asyncio.wait_for(future, timeout=4.0)
+            if isinstance(response, dict):
+                return response
+            return {"ok": False, "reason": "invalid_response"}
+        except asyncio.TimeoutError:
+            return {"ok": False, "reason": "timeout"}
+        finally:
+            whatsapp_tool_requests.pop(request_id, None)
+
     # Initialize ADA
     try:
         print(f"Initializing AudioLoop with device_index={device_index}")
@@ -515,6 +558,7 @@ async def start_audio(sid, data=None):
             on_device_update=on_device_update,
             on_error=on_error,
             on_tool_view=on_tool_view,
+            on_whatsapp_tool_request=on_whatsapp_tool_request,
 
             input_device_index=device_index,
             input_device_name=device_name,
@@ -1559,6 +1603,18 @@ async def update_settings(sid, data):
     if "show_lock_button" in data:
         SETTINGS["show_lock_button"] = bool(data.get("show_lock_button", True))
         print(f"[SERVER] Show lock button set to: {SETTINGS['show_lock_button']}")
+
+    if "whatsapp_monitor_enabled" in data:
+        SETTINGS["whatsapp_monitor_enabled"] = bool(data.get("whatsapp_monitor_enabled", False))
+        print(f"[SERVER] WhatsApp monitor enabled set to: {SETTINGS['whatsapp_monitor_enabled']}")
+
+    if "whatsapp_notify_enabled" in data:
+        SETTINGS["whatsapp_notify_enabled"] = bool(data.get("whatsapp_notify_enabled", True))
+        print(f"[SERVER] WhatsApp notifications enabled set to: {SETTINGS['whatsapp_notify_enabled']}")
+
+    if "whatsapp_show_detail_view" in data:
+        SETTINGS["whatsapp_show_detail_view"] = bool(data.get("whatsapp_show_detail_view", True))
+        print(f"[SERVER] WhatsApp detail view enabled set to: {SETTINGS['whatsapp_show_detail_view']}")
 
     if "default_weather_location" in data:
         SETTINGS["default_weather_location"] = str(data.get("default_weather_location", "") or "").strip() or "Berlin,DE"

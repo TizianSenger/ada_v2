@@ -397,6 +397,24 @@ _route_plan_tool = {
     }
 }
 
+_get_whatsapp_unread_tool = {
+    "name": "get_whatsapp_unread",
+    "description": "Return only the current number of unread WhatsApp messages.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+    }
+}
+
+_show_whatsapp_detail_view_tool = {
+    "name": "show_whatsapp_detail_view",
+    "description": "Open the embedded WhatsApp inbox in the left detail view panel.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+    }
+}
+
 _clear_detail_view_tool = {
     "name": "clear_detail_view",
     "description": "Clear the left detail view panel and return it to idle state.",
@@ -771,6 +789,8 @@ function_declarations = [
     _get_stock_quote_tool,
     _get_stock_news_tool,
     _route_plan_tool,
+    _get_whatsapp_unread_tool,
+    _show_whatsapp_detail_view_tool,
     _clear_detail_view_tool,
     _system_check_tool,
     _search_memory_tool,

@@ -50,6 +50,11 @@ SUPPORTED_VOICE_NAMES = {
 }
 
 
+def _is_transient_live_disconnect_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    return "1011" in message or "connectionclosederror" in message or "connection closed" in message
+
+
 def _get_api_key_from_settings():
     settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
     if not os.path.exists(settings_path):
@@ -209,7 +214,7 @@ GOOGLE_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "go
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
 
 class AudioLoop:
-    def __init__(self, video_mode=DEFAULT_MODE, on_audio_data=None, on_video_frame=None, on_cad_data=None, on_web_data=None, on_transcription=None, on_tool_confirmation=None, on_cad_status=None, on_cad_thought=None, on_project_update=None, on_device_update=None, on_error=None, on_tool_view=None, on_status=None, input_device_index=None, input_device_name=None, output_device_index=None, kasa_agent=None):
+    def __init__(self, video_mode=DEFAULT_MODE, on_audio_data=None, on_video_frame=None, on_cad_data=None, on_web_data=None, on_transcription=None, on_tool_confirmation=None, on_cad_status=None, on_cad_thought=None, on_project_update=None, on_device_update=None, on_error=None, on_tool_view=None, on_status=None, on_whatsapp_tool_request=None, input_device_index=None, input_device_name=None, output_device_index=None, kasa_agent=None):
         self.video_mode = video_mode
         self.on_audio_data = on_audio_data
         self.on_video_frame = on_video_frame
@@ -224,6 +229,7 @@ class AudioLoop:
         self.on_error = on_error
         self.on_tool_view = on_tool_view
         self.on_status = on_status
+        self.on_whatsapp_tool_request = on_whatsapp_tool_request
         self.input_device_index = input_device_index
         self.input_device_name = input_device_name
         self.output_device_index = output_device_index
@@ -458,6 +464,26 @@ class AudioLoop:
         except Exception as e:
             print(f"[ADA DEBUG] [WARN] Failed to emit tool view: {e}")
 
+    async def fetch_whatsapp_snapshot(self, open_detail=False, max_chats=20):
+        if not callable(self.on_whatsapp_tool_request):
+            return None
+
+        limit = int(max_chats or 20)
+        if limit < 1:
+            limit = 1
+        if limit > 30:
+            limit = 30
+
+        try:
+            response = await self.on_whatsapp_tool_request(
+                open_detail=bool(open_detail),
+                max_chats=limit,
+            )
+            return response if isinstance(response, dict) else None
+        except Exception as e:
+            print(f"[ADA DEBUG] [WARN] WhatsApp snapshot request failed: {e}")
+            return None
+
     async def run_system_check(self, include_network_checks=True):
         started_ts = time.time()
         checks = []
@@ -472,6 +498,7 @@ class AudioLoop:
             planned_checks.extend([
                 "Smart Home Discovery",
                 "Printer Discovery",
+                "WhatsApp Monitor",
                 "Weather API",
                 "Stock Market API",
                 "Route Service",
@@ -680,6 +707,81 @@ class AudioLoop:
                     add_check("Printer Discovery", "warn", "No printers discovered.", duration_ms=(time.time() - t0) * 1000)
             except Exception as e:
                 add_check("Printer Discovery", "fail", f"Printer check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            # WhatsApp monitor probe (via frontend snapshot bridge)
+            t0 = time.time()
+            try:
+                snapshot_response = await self.fetch_whatsapp_snapshot(open_detail=False, max_chats=6)
+                if not snapshot_response:
+                    add_check(
+                        "WhatsApp Monitor",
+                        "warn",
+                        "WhatsApp status not available (no frontend bridge response).",
+                        duration_ms=(time.time() - t0) * 1000,
+                    )
+                elif not snapshot_response.get("ok", False):
+                    reason = str(snapshot_response.get("reason", "unknown") or "unknown")
+                    add_check(
+                        "WhatsApp Monitor",
+                        "warn",
+                        f"WhatsApp status unavailable: {reason}.",
+                        {"reason": reason},
+                        (time.time() - t0) * 1000,
+                    )
+                else:
+                    whatsapp = snapshot_response.get("whatsapp", {}) or {}
+                    status = str(whatsapp.get("status", "unknown") or "unknown")
+                    unread = int(whatsapp.get("unreadCount", 0) or 0)
+                    chats = whatsapp.get("chats", []) or []
+                    unread_chats = [
+                        str(c.get("name", "Unknown") or "Unknown")
+                        for c in chats
+                        if int(c.get("unread", 0) or 0) > 0
+                    ][:5]
+
+                    details = {
+                        "status": status,
+                        "unread_count": unread,
+                        "chat_count": len(chats),
+                        "monitor_enabled": bool(snapshot_response.get("monitor_enabled", False)),
+                        "detail_enabled": bool(snapshot_response.get("detail_enabled", False)),
+                        "unread_chats": unread_chats,
+                    }
+
+                    if status == "connected":
+                        add_check(
+                            "WhatsApp Monitor",
+                            "pass",
+                            f"WhatsApp connected ({unread} unread message(s)).",
+                            details,
+                            (time.time() - t0) * 1000,
+                        )
+                    elif status == "login_required":
+                        add_check(
+                            "WhatsApp Monitor",
+                            "warn",
+                            "WhatsApp login required (QR not confirmed).",
+                            details,
+                            (time.time() - t0) * 1000,
+                        )
+                    elif status == "disabled":
+                        add_check(
+                            "WhatsApp Monitor",
+                            "warn",
+                            "WhatsApp monitor is disabled in settings.",
+                            details,
+                            (time.time() - t0) * 1000,
+                        )
+                    else:
+                        add_check(
+                            "WhatsApp Monitor",
+                            "warn",
+                            f"WhatsApp status: {status}.",
+                            details,
+                            (time.time() - t0) * 1000,
+                        )
+            except Exception as e:
+                add_check("WhatsApp Monitor", "fail", f"WhatsApp check failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
             # Weather API probe
             t0 = time.time()
@@ -2068,6 +2170,64 @@ class AudioLoop:
                                     )
                                     function_responses.append(function_response)
 
+                                elif fc.name == "get_whatsapp_unread":
+                                    snapshot_response = await self.fetch_whatsapp_snapshot(
+                                        open_detail=False,
+                                        max_chats=10,
+                                    )
+
+                                    if not snapshot_response or not snapshot_response.get("ok", False):
+                                        result_str = (
+                                            "WhatsApp-Daten sind aktuell nicht verfuegbar. "
+                                            "Bitte pruefe, ob ADA verbunden ist und der WhatsApp-Monitor aktiv ist."
+                                        )
+                                    else:
+                                        whatsapp = snapshot_response.get("whatsapp", {}) or {}
+                                        status = str(whatsapp.get("status", "unknown") or "unknown")
+                                        unread = int(whatsapp.get("unreadCount", 0) or 0)
+
+                                        if status == "disabled":
+                                            result_str = "WhatsApp-Monitor ist deaktiviert. Aktiviere ihn in Settings > Social Accounts."
+                                        elif status == "login_required":
+                                            result_str = "WhatsApp ist nicht eingeloggt. Bitte in Settings > Social Accounts auf Open WhatsApp Login klicken und QR scannen."
+                                        else:
+                                            result_str = f"Du hast aktuell {unread} ungelesene WhatsApp-Nachrichten."
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "show_whatsapp_detail_view":
+                                    snapshot_response = await self.fetch_whatsapp_snapshot(
+                                        open_detail=True,
+                                        max_chats=30,
+                                    )
+
+                                    if not snapshot_response or not snapshot_response.get("ok", False):
+                                        result_str = (
+                                            "Ich konnte die WhatsApp-Detail-Ansicht nicht oeffnen. "
+                                            "Bitte pruefe, ob das Frontend verbunden ist."
+                                        )
+                                    else:
+                                        if snapshot_response.get("opened_detail", False):
+                                            result_str = "WhatsApp wurde in der Detail View geoeffnet."
+                                        else:
+                                            reason = str(snapshot_response.get("reason", "") or "")
+                                            if reason == "monitor_disabled":
+                                                result_str = "WhatsApp-Detailansicht konnte nicht geoeffnet werden, weil der WhatsApp-Monitor deaktiviert ist."
+                                            else:
+                                                result_str = "WhatsApp-Daten wurden aktualisiert, aber die Detailansicht konnte nicht geoeffnet werden."
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
                                 elif fc.name == "clear_detail_view":
                                     self.emit_tool_view({"type": "clear", "title": "Detail View"})
                                     result_str = "Detail view wurde geleert und auf Idle zurueckgesetzt."
@@ -2467,8 +2627,11 @@ class AudioLoop:
                 while not self.audio_in_queue.empty():
                     self.audio_in_queue.get_nowait()
         except Exception as e:
-            print(f"Error in receive_audio: {e}")
-            traceback.print_exc()
+            if _is_transient_live_disconnect_error(e):
+                print(f"[ADA DEBUG] [LIVE] Stream disconnected (transient): {e}")
+            else:
+                print(f"Error in receive_audio: {e}")
+                traceback.print_exc()
             # CRITICAL: Re-raise to crash the TaskGroup and trigger outer loop reconnect
             raise e
 

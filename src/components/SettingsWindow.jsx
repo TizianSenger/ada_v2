@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { X } from 'lucide-react';
 
+const ipcRenderer =
+    typeof window !== 'undefined' && typeof window.require === 'function'
+        ? window.require('electron')?.ipcRenderer
+        : null;
+
 const TOOLS = [
     { id: 'generate_cad', label: 'Generate CAD' },
     { id: 'run_web_agent', label: 'Web Agent' },
@@ -23,6 +28,8 @@ const TOOLS = [
     { id: 'get_stock_quote', label: 'Get Stock Quote' },
     { id: 'get_stock_news', label: 'Get Stock News' },
     { id: 'route_plan', label: 'Route Plan (Free)' },
+    { id: 'get_whatsapp_unread', label: 'Get WhatsApp Unread' },
+    { id: 'show_whatsapp_detail_view', label: 'Show WhatsApp Detail View' },
     { id: 'clear_detail_view', label: 'Clear Detail View' },
     { id: 'system_check', label: 'System Check' },
     { id: 'search_memory', label: 'Search Memory' },
@@ -81,6 +88,10 @@ const TOOL_GROUPS = {
         'list_gmail_labels',
         'update_gmail_labels',
         'send_gmail_message',
+    ],
+    WhatsApp: [
+        'get_whatsapp_unread',
+        'show_whatsapp_detail_view',
     ],
     Utility: [
         'get_current_datetime',
@@ -141,6 +152,9 @@ const SettingsWindow = ({
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
     const [showLockButton, setShowLockButton] = useState(true);
+    const [whatsappMonitorEnabled, setWhatsappMonitorEnabled] = useState(false);
+    const [whatsappNotifyEnabled, setWhatsappNotifyEnabled] = useState(true);
+    const [whatsappMessage, setWhatsappMessage] = useState('');
     const [longTermMemoryEnabled, setLongTermMemoryEnabled] = useState(true);
     const [clearMemoryBusy, setClearMemoryBusy] = useState(false);
     const [clearMemoryMessage, setClearMemoryMessage] = useState('');
@@ -218,6 +232,12 @@ const SettingsWindow = ({
                 }
                 if (typeof settings.show_lock_button !== 'undefined') {
                     setShowLockButton(Boolean(settings.show_lock_button));
+                }
+                if (typeof settings.whatsapp_monitor_enabled !== 'undefined') {
+                    setWhatsappMonitorEnabled(Boolean(settings.whatsapp_monitor_enabled));
+                }
+                if (typeof settings.whatsapp_notify_enabled !== 'undefined') {
+                    setWhatsappNotifyEnabled(Boolean(settings.whatsapp_notify_enabled));
                 }
                 if (typeof settings.backup_pin_configured !== 'undefined') {
                     setBackupPinConfigured(Boolean(settings.backup_pin_configured));
@@ -358,6 +378,28 @@ const SettingsWindow = ({
         const newVal = !showLockButton;
         setShowLockButton(newVal);
         socket.emit('update_settings', { show_lock_button: newVal });
+    };
+
+    const toggleWhatsappMonitor = () => {
+        const newVal = !whatsappMonitorEnabled;
+        setWhatsappMonitorEnabled(newVal);
+        socket.emit('update_settings', { whatsapp_monitor_enabled: newVal });
+        setWhatsappMessage(newVal
+            ? 'WhatsApp background monitoring enabled.'
+            : 'WhatsApp background monitoring disabled.');
+    };
+
+    const toggleWhatsappNotifications = () => {
+        const newVal = !whatsappNotifyEnabled;
+        setWhatsappNotifyEnabled(newVal);
+        socket.emit('update_settings', { whatsapp_notify_enabled: newVal });
+    };
+
+    const openWhatsappLogin = () => {
+        if (ipcRenderer) {
+            ipcRenderer.send('whatsapp-open-login');
+        }
+        setWhatsappMessage('WhatsApp Web window opened. Scan QR code to sign in.');
     };
 
     const stopFaceSetupCapture = () => {
@@ -822,6 +864,38 @@ const SettingsWindow = ({
         </div>
     );
 
+    const renderSocialTab = () => (
+        <div className="space-y-5">
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">WhatsApp Web</h3>
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3 space-y-2">
+                    <ToggleRow
+                        label="Enable Background Monitor"
+                        enabled={whatsappMonitorEnabled}
+                        onToggle={toggleWhatsappMonitor}
+                    />
+                    <ToggleRow
+                        label="Desktop Notifications on New Messages"
+                        enabled={whatsappNotifyEnabled}
+                        onToggle={toggleWhatsappNotifications}
+                    />
+
+                    <div className="flex items-center justify-between mt-3">
+                        <span className="text-[10px] text-cyan-500/70">Open WhatsApp Web login/session window</span>
+                        <button
+                            onClick={openWhatsappLogin}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                        >
+                            Open WhatsApp Login
+                        </button>
+                    </div>
+
+                    {whatsappMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{whatsappMessage}</p>}
+                </div>
+            </div>
+        </div>
+    );
+
     const renderDevicesTab = () => (
         <div className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -995,6 +1069,12 @@ const SettingsWindow = ({
                         Devices
                     </button>
                     <button
+                        onClick={() => setActiveTab('social')}
+                        className={`${TAB_BUTTON} ${activeTab === 'social' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                    >
+                        Social Accounts
+                    </button>
+                    <button
                         onClick={() => setActiveTab('smart-home')}
                         className={`${TAB_BUTTON} ${activeTab === 'smart-home' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
                     >
@@ -1015,6 +1095,7 @@ const SettingsWindow = ({
                     {activeTab === 'general' && renderGeneralTab()}
                     {activeTab === 'security' && renderSecurityTab()}
                     {activeTab === 'devices' && renderDevicesTab()}
+                    {activeTab === 'social' && renderSocialTab()}
                     {activeTab === 'smart-home' && renderSmartHomeTab()}
                     {activeTab === 'tools' && renderToolsTab()}
                 </div>
