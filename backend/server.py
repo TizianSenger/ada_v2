@@ -132,6 +132,7 @@ DEFAULT_SETTINGS = {
     "tapo_password": "",
     "voice_name": "Kore",
     "camera_flipped": False, # Invert cursor horizontal direction
+    "show_lock_button": True,
     "gemini_api_key": "",
     "finnhub_api_key": ""
 }
@@ -1554,6 +1555,10 @@ async def update_settings(sid, data):
     if "camera_flipped" in data:
         SETTINGS["camera_flipped"] = data["camera_flipped"]
         print(f"[SERVER] Camera flip set to: {data['camera_flipped']}")
+
+    if "show_lock_button" in data:
+        SETTINGS["show_lock_button"] = bool(data.get("show_lock_button", True))
+        print(f"[SERVER] Show lock button set to: {SETTINGS['show_lock_button']}")
 
     if "default_weather_location" in data:
         SETTINGS["default_weather_location"] = str(data.get("default_weather_location", "") or "").strip() or "Berlin,DE"

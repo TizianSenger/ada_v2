@@ -140,6 +140,7 @@ const SettingsWindow = ({
 
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
+    const [showLockButton, setShowLockButton] = useState(true);
     const [longTermMemoryEnabled, setLongTermMemoryEnabled] = useState(true);
     const [clearMemoryBusy, setClearMemoryBusy] = useState(false);
     const [clearMemoryMessage, setClearMemoryMessage] = useState('');
@@ -214,6 +215,9 @@ const SettingsWindow = ({
                 if (typeof settings.face_auth_enabled !== 'undefined') {
                     setFaceAuthEnabled(settings.face_auth_enabled);
                     localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
+                }
+                if (typeof settings.show_lock_button !== 'undefined') {
+                    setShowLockButton(Boolean(settings.show_lock_button));
                 }
                 if (typeof settings.backup_pin_configured !== 'undefined') {
                     setBackupPinConfigured(Boolean(settings.backup_pin_configured));
@@ -348,6 +352,12 @@ const SettingsWindow = ({
         setFaceAuthEnabled(newVal); // Optimistic Update
         localStorage.setItem('face_auth_enabled', newVal);
         socket.emit('update_settings', { face_auth_enabled: newVal });
+    };
+
+    const toggleShowLockButton = () => {
+        const newVal = !showLockButton;
+        setShowLockButton(newVal);
+        socket.emit('update_settings', { show_lock_button: newVal });
     };
 
     const stopFaceSetupCapture = () => {
@@ -689,6 +699,13 @@ const SettingsWindow = ({
                     enabled={faceAuthEnabled}
                     onToggle={toggleFaceAuth}
                 />
+                <div className="mt-2">
+                    <ToggleRow
+                        label="Show Lock Button (Bottom Toolbar)"
+                        enabled={showLockButton}
+                        onToggle={toggleShowLockButton}
+                    />
+                </div>
                 <div className="mt-3 bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
                     <div className="text-[10px] text-cyan-500/80 uppercase">Setup Face Recognition</div>
                     <p className="text-[10px] text-cyan-500/70 mt-1">

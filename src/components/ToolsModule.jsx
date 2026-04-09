@@ -25,6 +25,7 @@ const ToolsModule = ({
     showQuotaWindow,
     quotaState,
     onLockSession,
+    showLockButton = true,
     activeDragElement,
 
     position,
@@ -161,13 +162,15 @@ const ToolsModule = ({
                 </button>
 
                 {/* Manual Lock */}
-                <button
-                    onClick={onLockSession}
-                    className="p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 border-amber-500/80 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 shadow-[0_0_15px_rgba(251,191,36,0.28)]"
-                    title="Lock Session"
-                >
-                    <Lock size={24} />
-                </button>
+                {showLockButton && (
+                    <button
+                        onClick={onLockSession}
+                        className="p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 border-amber-500/80 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 shadow-[0_0_15px_rgba(251,191,36,0.28)]"
+                        title="Lock Session"
+                    >
+                        <Lock size={24} />
+                    </button>
+                )}
             </div>
         </div>
     );

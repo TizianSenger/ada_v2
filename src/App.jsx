@@ -45,6 +45,7 @@ function App() {
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(() => {
         return localStorage.getItem('face_auth_enabled') === 'true';
     });
+    const [showLockButton, setShowLockButton] = useState(true);
 
 
     const [isConnected, setIsConnected] = useState(true); // Power state DEFAULT ON
@@ -437,6 +438,9 @@ function App() {
             if (typeof settings.camera_flipped !== 'undefined') {
                 console.log("[Settings] Camera flip set to:", settings.camera_flipped);
                 setIsCameraFlipped(settings.camera_flipped);
+            }
+            if (typeof settings.show_lock_button !== 'undefined') {
+                setShowLockButton(Boolean(settings.show_lock_button));
             }
         });
         socket.on('error', (data) => {
@@ -1896,6 +1900,7 @@ function App() {
                         showQuotaWindow={showQuotaWindow}
                         quotaState={quotaInfo.level}
                         onLockSession={lockSession}
+                        showLockButton={showLockButton}
                         activeDragElement={activeDragElement}
                         position={elementPositions.tools}
                         onMouseDown={(e) => handleMouseDown(e, 'tools')}
