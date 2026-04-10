@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, Notification } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
 
 // Use hardware acceleration by default for smooth UI.
@@ -25,11 +26,36 @@ let whatsappConfig = {
 };
 let lastWhatsappUnread = 0;
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+    app.quit();
+}
+
 const WHATSAPP_URL = 'https://web.whatsapp.com';
 const WHATSAPP_POLL_MS = 10000;
 const WHATSAPP_USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const WHATSAPP_EXPECTED_BLOCKED_HOSTS = ['flows.whatsapp.net'];
+
+// Use explicit runtime paths to avoid Windows permission/locking issues in
+// Chromium cache + quota databases on some systems.
+const electronRuntimeRoot = path.join(app.getPath('temp'), 'ada-v2-electron-runtime');
+const electronUserDataDir = path.join(electronRuntimeRoot, 'userData');
+const electronSessionDataDir = path.join(electronRuntimeRoot, 'sessionData');
+const electronCacheDir = path.join(electronRuntimeRoot, 'cache');
+
+try {
+    fs.mkdirSync(electronUserDataDir, { recursive: true });
+    fs.mkdirSync(electronSessionDataDir, { recursive: true });
+    fs.mkdirSync(electronCacheDir, { recursive: true });
+
+    app.setPath('userData', electronUserDataDir);
+    app.setPath('sessionData', electronSessionDataDir);
+    app.setPath('cache', electronCacheDir);
+    app.commandLine.appendSwitch('disk-cache-dir', electronCacheDir);
+} catch (err) {
+    console.warn(`[APP] Failed to prepare runtime cache paths: ${err.message}`);
+}
 
 function emitWhatsappStatus(payload) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -353,9 +379,28 @@ function requestAppShutdown(reason = 'user_request') {
     }, 2000);
 }
 
-function requestAppRestart(reason = 'user_restart') {
-    if (isAppShuttingDown) {
+function killPythonBackendProcess(context = 'shutdown') {
+    if (!pythonProcess) {
         return;
+    }
+
+    try {
+        if (process.platform === 'win32') {
+            const { execSync } = require('child_process');
+            execSync(`taskkill /pid ${pythonProcess.pid} /f /t`);
+        } else {
+            pythonProcess.kill('SIGKILL');
+        }
+    } catch (err) {
+        console.warn(`[APP] Failed to kill Python backend during ${context}: ${err.message}`);
+    } finally {
+        pythonProcess = null;
+    }
+}
+
+async function requestAppRestart(reason = 'user_restart') {
+    if (isAppShuttingDown) {
+        return { ok: false, message: 'App is already shutting down.' };
     }
 
     isAppShuttingDown = true;
@@ -367,8 +412,40 @@ function requestAppRestart(reason = 'user_restart') {
         console.warn(`[APP] Failed to stop WhatsApp watcher during restart: ${err.message}`);
     }
 
-    app.relaunch();
-    app.exit(0);
+    const isDev = process.env.NODE_ENV !== 'production';
+
+    try {
+        if (isDev) {
+            // In dev mode, avoid app.relaunch because it tears down npm/concurrently
+            // and can leave the splash waiting for services.
+            killPythonBackendProcess('restart');
+
+            const portTaken = await checkBackendPort(8000);
+            if (!portTaken) {
+                startPythonBackend();
+            } else {
+                console.log('[APP] Port 8000 already in use during restart; reusing running backend.');
+            }
+
+            await waitForBackend();
+
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.reloadIgnoringCache();
+                mainWindow.show();
+                mainWindow.focus();
+            }
+
+            return { ok: true, mode: 'in-place-dev-restart' };
+        }
+
+        app.relaunch();
+        app.exit(0);
+        return { ok: true, mode: 'full-relaunch' };
+    } finally {
+        // For full relaunch the process exits right away; for in-place restart we
+        // allow future restarts again once backend + UI reload is triggered.
+        isAppShuttingDown = false;
+    }
 }
 
 async function readWhatsappSnapshotForToolRequest(options = {}) {
@@ -542,8 +619,7 @@ app.whenReady().then(() => {
     });
 
     ipcMain.handle('app-restart', async () => {
-        requestAppRestart('settings_button');
-        return { ok: true };
+        return requestAppRestart('settings_button');
     });
 
     checkBackendPort(8000).then((isTaken) => {
@@ -568,6 +644,16 @@ app.whenReady().then(() => {
             console.error(`[Electron] GPU process gone: reason=${details.reason || 'unknown'} code=${details.exitCode ?? 'n/a'}`);
         }
     });
+});
+
+app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        return;
+    }
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    mainWindow.focus();
 });
 
 function checkBackendPort(port) {
@@ -626,19 +712,5 @@ app.on('will-quit', () => {
     console.log('App closing... Killing Python backend.');
     isAppShuttingDown = true;
     stopWhatsappWatcher();
-    if (pythonProcess) {
-        if (process.platform === 'win32') {
-            // Windows: Force kill the process tree synchronously
-            try {
-                const { execSync } = require('child_process');
-                execSync(`taskkill /pid ${pythonProcess.pid} /f /t`);
-            } catch (e) {
-                console.error('Failed to kill python process:', e.message);
-            }
-        } else {
-            // Unix: SIGKILL
-            pythonProcess.kill('SIGKILL');
-        }
-        pythonProcess = null;
-    }
+    killPythonBackendProcess('shutdown');
 });

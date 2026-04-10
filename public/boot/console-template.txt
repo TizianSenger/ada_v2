@@ -1,5 +1,5 @@
 [BOOT] Profile: ADA_V2
-[BOOT] Theme: CINEMATIC_CRT
+[BOOT] Theme: CYAN_TERMINAL
 [BOOT] Security Layer: ACTIVE
 
 // Splash Script: Visual Boot Code
