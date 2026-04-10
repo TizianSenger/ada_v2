@@ -9,6 +9,7 @@ import {
     Gauge,
     Route,
     ShieldCheck,
+    Brain,
     Cpu,
     Database,
     Wifi,
@@ -77,6 +78,7 @@ const ModeHeader = ({ activeMode }) => {
         { id: 'route', label: 'Route', Icon: Route },
         { id: 'stock', label: 'Stock', Icon: LineChart },
         { id: 'system', label: 'System', Icon: ShieldCheck },
+        { id: 'memory', label: 'Memory', Icon: Brain },
     ];
 
     return (
@@ -259,7 +261,7 @@ const WhatsappView = ({ payload }) => {
         };
     }, [openEmbeddedWeb, webviewReloadKey]);
     const statusLabel = status === 'connected'
-        ? 'Logged In'
+        ? 'Connected'
         : status === 'login_required'
             ? 'Login Required'
             : status === 'disabled'
@@ -902,6 +904,72 @@ const SystemCheckView = ({ payload, variant = 'default', meshOnly = false, showM
     );
 };
 
+const MemoryQualityView = ({ payload }) => {
+    const report = payload?.report || {};
+    const quality = report?.quality || {};
+    const policy = report?.policy_stats || {};
+    const byRoom = Array.isArray(quality?.by_room) ? quality.by_room : [];
+    const byType = Array.isArray(quality?.by_type) ? quality.by_type : [];
+
+    const avgConfidence = Number.isFinite(Number(quality?.avg_confidence)) ? Number(quality.avg_confidence) : 0;
+    const noiseRatio = Number.isFinite(Number(quality?.noise_ratio)) ? Number(quality.noise_ratio) : 0;
+    const duplicateRatio = Number.isFinite(Number(quality?.duplicate_ratio)) ? Number(quality.duplicate_ratio) : 0;
+
+    return (
+        <div className="h-full w-full flex flex-col overflow-hidden">
+            <div className="px-3 py-2 border-b border-cyan-900/40 bg-black/30">
+                <div className="text-cyan-300 text-xs uppercase tracking-wider font-bold">{payload?.title || 'Memory Quality'}</div>
+                <div className="text-cyan-100/75 text-xs mt-1">Project: {report?.current_project || '-'}</div>
+                <div className="text-cyan-100/75 text-xs">Wing: {report?.current_wing || '-'}</div>
+                {report?.message && <div className="text-[11px] text-cyan-300/80 mt-1">{report.message}</div>}
+            </div>
+
+            <div className="px-3 py-2 border-b border-cyan-900/30 bg-black/20 grid grid-cols-2 gap-2 text-[11px]">
+                <div className="border border-cyan-700/40 rounded p-2 text-cyan-100">Total: {report?.total_entries ?? 0}</div>
+                <div className="border border-cyan-700/40 rounded p-2 text-cyan-100">Sample: {quality?.sampled_entries ?? 0}</div>
+                <div className="border border-emerald-500/30 rounded p-2 text-emerald-200">Avg conf: {(avgConfidence * 100).toFixed(1)}%</div>
+                <div className="border border-amber-500/30 rounded p-2 text-amber-200">Noise: {(noiseRatio * 100).toFixed(1)}%</div>
+                <div className="border border-red-500/30 rounded p-2 text-red-200">Dupes: {(duplicateRatio * 100).toFixed(1)}%</div>
+                <div className="border border-cyan-700/40 rounded p-2 text-cyan-200">Long: {quality?.long_entries ?? 0}</div>
+            </div>
+
+            <div className="flex-1 overflow-auto scrollbar-hide p-3 space-y-3">
+                <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Policy Stats (session)</div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                        <div className="text-cyan-100/90">Saved: {policy?.saved ?? 0}</div>
+                        <div className="text-cyan-100/90">Filtered: {policy?.filtered ?? 0}</div>
+                        <div className="text-cyan-100/90">Duplicates: {policy?.duplicates ?? 0}</div>
+                        <div className="text-cyan-100/90">Manual saved: {policy?.manual_saved ?? 0}</div>
+                    </div>
+                </div>
+
+                <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Top Rooms</div>
+                    {byRoom.length === 0 && <div className="text-[11px] text-cyan-400/70">No room data.</div>}
+                    {byRoom.map((item) => (
+                        <div key={`room-${item?.name}`} className="flex items-center justify-between text-[11px] text-cyan-100/90 py-0.5">
+                            <span>{item?.name || 'unknown'}</span>
+                            <span>{item?.count ?? 0}</span>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Top Memory Types</div>
+                    {byType.length === 0 && <div className="text-[11px] text-cyan-400/70">No type data.</div>}
+                    {byType.map((item) => (
+                        <div key={`type-${item?.name}`} className="flex items-center justify-between text-[11px] text-cyan-100/90 py-0.5">
+                            <span>{item?.name || 'unknown'}</span>
+                            <span>{item?.count ?? 0}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
     const [fadeKey, setFadeKey] = useState(0);
     const isEmpty = !payload?.type || payload.type === 'clear';
@@ -915,6 +983,7 @@ const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
         if (payload.type === 'route') return 'route';
         if (payload.type === 'stock') return 'stock';
         if (payload.type === 'system_check') return 'system';
+        if (payload.type === 'memory_quality') return 'memory';
         return 'none';
     }, [payload]);
 
@@ -935,6 +1004,7 @@ const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
         const isSystemNoMesh = variant === 'system-no-mesh';
         content = <SystemCheckView payload={payload} variant={isSystemHero ? 'hero' : 'default'} meshOnly={isSystemHero} showMesh={!isSystemNoMesh} />;
     }
+    if (payload?.type === 'memory_quality') content = <MemoryQualityView payload={payload} />;
     if (payload?.type === 'clear') content = <EmptyState />;
 
     return (

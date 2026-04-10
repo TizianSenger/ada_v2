@@ -451,6 +451,22 @@ _search_memory_tool = {
             "n_results": {
                 "type": "NUMBER",
                 "description": "How many memory entries to return (1-10)."
+            },
+            "wing": {
+                "type": "STRING",
+                "description": "Optional memory wing scope such as work, private, or hobby_<project>."
+            },
+            "room": {
+                "type": "STRING",
+                "description": "Optional room scope such as decisions, tasks, preferences, cad, printer, or smart_home."
+            },
+            "memory_type": {
+                "type": "STRING",
+                "description": "Optional type filter, for example decision, task, preference, fact, or note."
+            },
+            "min_confidence": {
+                "type": "NUMBER",
+                "description": "Optional minimum confidence between 0.0 and 1.0."
             }
         },
         "required": ["query"]
@@ -466,6 +482,22 @@ _save_to_memory_tool = {
             "text": {
                 "type": "STRING",
                 "description": "The memory text to save."
+            },
+            "wing": {
+                "type": "STRING",
+                "description": "Optional memory wing such as work, private, or hobby_<project>."
+            },
+            "room": {
+                "type": "STRING",
+                "description": "Optional room label such as decisions, tasks, preferences, cad, printer, or smart_home."
+            },
+            "memory_type": {
+                "type": "STRING",
+                "description": "Optional type label, for example decision, task, preference, fact, or note."
+            },
+            "confidence": {
+                "type": "NUMBER",
+                "description": "Optional confidence between 0.0 and 1.0."
             }
         },
         "required": ["text"]
@@ -478,6 +510,20 @@ _memory_status_tool = {
     "parameters": {
         "type": "OBJECT",
         "properties": {}
+    }
+}
+
+_show_memory_quality_view_tool = {
+    "name": "show_memory_quality_view",
+    "description": "Open the memory quality panel in the left detail view and run a memory quality report.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "sample_limit": {
+                "type": "NUMBER",
+                "description": "Optional sample size for report generation (50-5000)."
+            }
+        }
     }
 }
 
@@ -796,6 +842,7 @@ function_declarations = [
     _search_memory_tool,
     _save_to_memory_tool,
     _memory_status_tool,
+    _show_memory_quality_view_tool,
     _list_calendar_events_tool,
     _get_calendar_view_tool,
     _create_calendar_event_tool,

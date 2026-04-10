@@ -35,6 +35,7 @@ const TOOLS = [
     { id: 'search_memory', label: 'Search Memory' },
     { id: 'save_to_memory', label: 'Save to Memory' },
     { id: 'memory_status', label: 'Memory Status' },
+    { id: 'show_memory_quality_view', label: 'Show Memory Quality View' },
     { id: 'iterate_cad', label: 'Iterate CAD' },
     { id: 'connect_google_workspace', label: 'Connect Google Workspace' },
     { id: 'list_calendar_events', label: 'List Calendar Events' },
@@ -103,6 +104,7 @@ const TOOL_GROUPS = {
         'search_memory',
         'save_to_memory',
         'memory_status',
+        'show_memory_quality_view',
     ],
     Finance: [
         'search_stock_symbol',
@@ -156,10 +158,14 @@ const SettingsWindow = ({
     const [whatsappNotifyEnabled, setWhatsappNotifyEnabled] = useState(true);
     const [whatsappMessage, setWhatsappMessage] = useState('');
     const [longTermMemoryEnabled, setLongTermMemoryEnabled] = useState(true);
+    const [memoryLocked, setMemoryLocked] = useState(false);
     const [clearMemoryBusy, setClearMemoryBusy] = useState(false);
     const [clearMemoryMessage, setClearMemoryMessage] = useState('');
     const [showClearMemoryConfirm, setShowClearMemoryConfirm] = useState(false);
     const [memoryEntryCount, setMemoryEntryCount] = useState(null);
+    const [memoryQualityLoading, setMemoryQualityLoading] = useState(false);
+    const [memoryQualityMessage, setMemoryQualityMessage] = useState('');
+    const [memoryQualityReport, setMemoryQualityReport] = useState(null);
     const [faceSetupPin, setFaceSetupPin] = useState('');
     const [faceSetupPinConfirm, setFaceSetupPinConfirm] = useState('');
     const [faceSetupBusy, setFaceSetupBusy] = useState(false);
@@ -248,6 +254,9 @@ const SettingsWindow = ({
                 if (typeof settings.long_term_memory_enabled !== 'undefined') {
                     setLongTermMemoryEnabled(Boolean(settings.long_term_memory_enabled));
                 }
+                if (typeof settings.memory_locked !== 'undefined') {
+                    setMemoryLocked(Boolean(settings.memory_locked));
+                }
                 setApiKeyConfigured(Boolean(settings.gemini_api_key_configured));
                 setFinnhubApiKeyConfigured(Boolean(settings.finnhub_api_key_configured));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
@@ -293,11 +302,26 @@ const SettingsWindow = ({
             }
         };
 
+        const handleMemoryQualityResult = (result) => {
+            const ok = Boolean(result?.ok);
+            setMemoryQualityLoading(false);
+            if (ok) {
+                if (result?.report && typeof result.report === 'object') {
+                    setMemoryQualityReport(result.report);
+                }
+                const msg = String(result?.message || '').trim();
+                if (msg) setMemoryQualityMessage(msg);
+            } else {
+                setMemoryQualityMessage(String(result?.message || 'Memory quality report failed.'));
+            }
+        };
+
         socket.on('settings', handleSettings);
         socket.on('google_workspace_connection_result', handleGoogleConnectionResult);
         socket.on('face_setup_result', handleFaceSetupResult);
         socket.on('clear_long_term_memory_result', handleClearMemoryResult);
         socket.on('long_term_memory_count_result', handleMemoryCountResult);
+        socket.on('memory_quality_report_result', handleMemoryQualityResult);
         socket.emit('get_long_term_memory_count');
         // Also listen for legacy tool_permissions if needed, but 'settings' covers it
         // socket.on('tool_permissions', handlePermissions); 
@@ -308,6 +332,7 @@ const SettingsWindow = ({
             socket.off('face_setup_result', handleFaceSetupResult);
             socket.off('clear_long_term_memory_result', handleClearMemoryResult);
             socket.off('long_term_memory_count_result', handleMemoryCountResult);
+            socket.off('memory_quality_report_result', handleMemoryQualityResult);
         };
     }, [socket]);
 
@@ -520,6 +545,22 @@ const SettingsWindow = ({
         const newVal = !longTermMemoryEnabled;
         setLongTermMemoryEnabled(newVal);
         socket.emit('update_settings', { long_term_memory_enabled: newVal });
+    };
+
+    const toggleMemoryLocked = () => {
+        const newVal = !memoryLocked;
+        setMemoryLocked(newVal);
+        socket.emit('update_settings', { memory_locked: newVal });
+    };
+
+    const runMemoryQualityCheck = (openPanel = false) => {
+        setMemoryQualityLoading(true);
+        setMemoryQualityMessage(openPanel ? 'Building report and opening detail view...' : 'Building memory quality report...');
+        if (openPanel) {
+            socket.emit('trigger_memory_quality_panel');
+        } else {
+            socket.emit('get_memory_quality_report', { sample_limit: 1200 });
+        }
     };
 
     const clearLongTermMemory = () => {
@@ -787,41 +828,146 @@ const SettingsWindow = ({
                 </div>
             </div>
 
-            <div>
-                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Long-Term Memory</h3>
-                <ToggleRow
-                    label="Persistent Memory"
-                    enabled={longTermMemoryEnabled}
-                    onToggle={toggleLongTermMemory}
-                />
-                <p className="mt-2 text-[10px] text-cyan-500/70">
-                    Enables persistent memory across sessions using local vector storage.
-                </p>
-            </div>
-
-            <div className="bg-gradient-to-br from-red-900/20 via-gray-900/60 to-black/70 border border-red-900/50 rounded-md p-3">
-                <div className="flex items-center justify-between gap-3">
-                    <div>
-                        <div className="text-[10px] text-red-300/90 uppercase tracking-wider">Danger Zone</div>
-                        <p className="mt-1 text-[10px] text-red-300/70">
-                            Permanently removes all stored long-term memory vectors.
-                        </p>
-                    </div>
-                    <button
-                        onClick={clearLongTermMemory}
-                        disabled={clearMemoryBusy}
-                        className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-red-700/70 hover:bg-red-600 text-white disabled:opacity-50"
-                    >
-                        {clearMemoryBusy ? 'Clearing...' : 'Clear Memory'}
-                    </button>
-                </div>
-                <p className="mt-2 text-[10px] text-red-200/80">
-                    Current entries: {memoryEntryCount === null ? 'loading...' : memoryEntryCount}
-                </p>
-                {clearMemoryMessage && <p className="mt-2 text-[10px] text-red-200/90">{clearMemoryMessage}</p>}
-            </div>
         </div>
     );
+
+    const renderMemoryTab = () => {
+        const quality = memoryQualityReport?.quality || {};
+        const policy = memoryQualityReport?.policy_stats || {};
+        const byRoom = Array.isArray(quality?.by_room) ? quality.by_room : [];
+        const byType = Array.isArray(quality?.by_type) ? quality.by_type : [];
+
+        const avgConfidence = Number.isFinite(Number(quality?.avg_confidence)) ? Number(quality.avg_confidence) : 0;
+        const noiseRatio = Number.isFinite(Number(quality?.noise_ratio)) ? Number(quality.noise_ratio) : 0;
+        const duplicateRatio = Number.isFinite(Number(quality?.duplicate_ratio)) ? Number(quality.duplicate_ratio) : 0;
+
+        return (
+            <div className="space-y-5">
+                <div>
+                    <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Memory Controls</h3>
+                    <div className="space-y-2">
+                        <ToggleRow
+                            label="Persistent Memory"
+                            enabled={longTermMemoryEnabled}
+                            onToggle={toggleLongTermMemory}
+                        />
+                        <ToggleRow
+                            label="Memory Lock (read/write block)"
+                            enabled={memoryLocked}
+                            onToggle={toggleMemoryLocked}
+                        />
+                    </div>
+                    <p className="mt-2 text-[10px] text-cyan-500/70">
+                        Persistent memory stores long-term context. Lock blocks memory access without disabling settings.
+                    </p>
+                </div>
+
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                            <div className="text-[10px] text-cyan-300/90 uppercase tracking-wider">Memory Quality</div>
+                            <div className="text-[10px] text-cyan-500/70 mt-1">Current entries: {memoryEntryCount === null ? 'loading...' : memoryEntryCount}</div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => runMemoryQualityCheck(false)}
+                                disabled={memoryQualityLoading}
+                                className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                            >
+                                {memoryQualityLoading ? 'Running...' : 'Check Quality'}
+                            </button>
+                            <button
+                                onClick={() => runMemoryQualityCheck(true)}
+                                disabled={memoryQualityLoading}
+                                className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-900/70 hover:bg-cyan-800 text-white disabled:opacity-50"
+                            >
+                                Open In Detail View
+                            </button>
+                        </div>
+                    </div>
+                    {memoryQualityMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{memoryQualityMessage}</p>}
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[11px]">
+                    <div className="border border-cyan-700/40 rounded p-2 text-cyan-100 bg-black/30">Total: {memoryQualityReport?.total_entries ?? 0}</div>
+                    <div className="border border-cyan-700/40 rounded p-2 text-cyan-100 bg-black/30">Sample: {quality?.sampled_entries ?? 0}</div>
+                    <div className="border border-emerald-500/30 rounded p-2 text-emerald-200 bg-black/30">Avg conf: {(avgConfidence * 100).toFixed(1)}%</div>
+                    <div className="border border-amber-500/30 rounded p-2 text-amber-200 bg-black/30">Noise: {(noiseRatio * 100).toFixed(1)}%</div>
+                    <div className="border border-red-500/30 rounded p-2 text-red-200 bg-black/30">Dupes: {(duplicateRatio * 100).toFixed(1)}%</div>
+                    <div className="border border-cyan-700/40 rounded p-2 text-cyan-200 bg-black/30">Long: {quality?.long_entries ?? 0}</div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-gray-900/35 border border-cyan-900/30 rounded-md p-3">
+                        <div className="text-[10px] text-cyan-300/85 uppercase tracking-wider mb-2">Policy Counters (session)</div>
+                        <div className="space-y-1 text-[11px] text-cyan-100/90">
+                            <div>Saved: {policy?.saved ?? 0}</div>
+                            <div>Filtered: {policy?.filtered ?? 0}</div>
+                            <div>Duplicates: {policy?.duplicates ?? 0}</div>
+                            <div>Manual saved: {policy?.manual_saved ?? 0}</div>
+                            <div>Manual duplicates: {policy?.manual_duplicates ?? 0}</div>
+                        </div>
+                    </div>
+                    <div className="bg-gray-900/35 border border-cyan-900/30 rounded-md p-3">
+                        <div className="text-[10px] text-cyan-300/85 uppercase tracking-wider mb-2">Top Rooms</div>
+                        <div className="space-y-1 text-[11px] text-cyan-100/90">
+                            {byRoom.length === 0 && <div className="text-cyan-500/70">No data yet.</div>}
+                            {byRoom.map((item) => (
+                                <div key={`settings-room-${item?.name}`} className="flex justify-between">
+                                    <span>{item?.name || 'unknown'}</span>
+                                    <span>{item?.count ?? 0}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="bg-gray-900/35 border border-cyan-900/30 rounded-md p-3">
+                        <div className="text-[10px] text-cyan-300/85 uppercase tracking-wider mb-2">Top Memory Types</div>
+                        <div className="space-y-1 text-[11px] text-cyan-100/90">
+                            {byType.length === 0 && <div className="text-cyan-500/70">No data yet.</div>}
+                            {byType.map((item) => (
+                                <div key={`settings-type-${item?.name}`} className="flex justify-between">
+                                    <span>{item?.name || 'unknown'}</span>
+                                    <span>{item?.count ?? 0}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="bg-gradient-to-br from-red-900/20 via-gray-900/60 to-black/70 border border-red-900/50 rounded-md p-3">
+                    <div className="flex items-center justify-between gap-3">
+                        <div>
+                            <div className="text-[10px] text-red-300/90 uppercase tracking-wider">Danger Zone</div>
+                            <p className="mt-1 text-[10px] text-red-300/70">
+                                Permanently removes all stored long-term memory vectors.
+                            </p>
+                        </div>
+                        <button
+                            onClick={clearLongTermMemory}
+                            disabled={clearMemoryBusy}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-red-700/70 hover:bg-red-600 text-white disabled:opacity-50"
+                        >
+                            {clearMemoryBusy ? 'Clearing...' : 'Clear Memory'}
+                        </button>
+                    </div>
+                    <p className="mt-2 text-[10px] text-red-200/80">
+                        Current entries: {memoryEntryCount === null ? 'loading...' : memoryEntryCount}
+                    </p>
+                    {clearMemoryMessage && <p className="mt-2 text-[10px] text-red-200/90">{clearMemoryMessage}</p>}
+                </div>
+
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <label className="text-[10px] text-cyan-500/60 uppercase">Upload Memory Text</label>
+                    <input
+                        type="file"
+                        accept=".txt"
+                        onChange={handleFileUpload}
+                        className="mt-2 w-full text-xs text-cyan-100 bg-gray-900 border border-cyan-800 rounded p-2 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-[10px] file:font-semibold file:bg-cyan-900 file:text-cyan-400 hover:file:bg-cyan-800 cursor-pointer"
+                    />
+                </div>
+            </div>
+        );
+    };
 
     const renderSmartHomeTab = () => (
         <div className="space-y-5">
@@ -973,18 +1119,6 @@ const SettingsWindow = ({
                 />
             </div>
 
-            <div>
-                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Memory Data</h3>
-                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
-                    <label className="text-[10px] text-cyan-500/60 uppercase">Upload Memory Text</label>
-                    <input
-                        type="file"
-                        accept=".txt"
-                        onChange={handleFileUpload}
-                        className="mt-2 w-full text-xs text-cyan-100 bg-gray-900 border border-cyan-800 rounded p-2 file:mr-2 file:py-1 file:px-2 file:rounded-full file:border-0 file:text-[10px] file:font-semibold file:bg-cyan-900 file:text-cyan-400 hover:file:bg-cyan-800 cursor-pointer"
-                    />
-                </div>
-            </div>
         </div>
     );
 
@@ -1086,6 +1220,12 @@ const SettingsWindow = ({
                     >
                         Tool Permissions
                     </button>
+                    <button
+                        onClick={() => setActiveTab('memory')}
+                        className={`${TAB_BUTTON} ${activeTab === 'memory' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                    >
+                        Memory
+                    </button>
                 </div>
 
                 <div
@@ -1098,6 +1238,7 @@ const SettingsWindow = ({
                     {activeTab === 'social' && renderSocialTab()}
                     {activeTab === 'smart-home' && renderSmartHomeTab()}
                     {activeTab === 'tools' && renderToolsTab()}
+                    {activeTab === 'memory' && renderMemoryTab()}
                 </div>
             </div>
 

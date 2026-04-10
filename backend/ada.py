@@ -13,6 +13,7 @@ import mss
 import argparse
 import math
 import struct
+import re
 import time
 import datetime
 
@@ -172,6 +173,7 @@ def _build_live_config(voice_name: str):
             "If information is uncertain or unavailable, say so clearly and provide the best possible next step. "
             "If the user asks to remember/save a fact, call save_to_memory. "
             "If the user asks for long-term memory state/status, call memory_status. "
+            "If the user asks for a memory check or wants the memory report in detail view, call show_memory_quality_view. "
             "When answering, respond using complete and concise sentences to keep a quick pacing and keep the conversation flowing.",
         tools=tools,
         speech_config=types.SpeechConfig(
@@ -296,6 +298,13 @@ class AudioLoop:
         self._memory_init_error = None
         self.long_term_memory_enabled = resolve_long_term_memory_enabled()
         self.memory_locked = resolve_memory_locked()
+        self.memory_policy_stats = {
+            "saved": 0,
+            "filtered": 0,
+            "duplicates": 0,
+            "manual_saved": 0,
+            "manual_duplicates": 0,
+        }
         if self.long_term_memory_enabled:
             self._ensure_memory_agent()
         
@@ -315,11 +324,31 @@ class AudioLoop:
             if self.memory and self.long_term_memory_enabled and not self.memory_locked:
                 try:
                     import threading
-                    threading.Thread(
-                        target=self.memory.store,
-                        args=(text, sender, self.project_manager.current_project),
-                        daemon=True,
-                    ).start()
+                    inferred = self._classify_memory(text)
+                    should_store, reason = self._should_auto_store_memory(text, sender, inferred)
+                    if should_store:
+                        is_dup, dup_reason = self._is_duplicate_memory(text, inferred)
+                        if not is_dup:
+                            self.memory_policy_stats["saved"] += 1
+                            threading.Thread(
+                                target=self.memory.store,
+                                kwargs={
+                                    "text": text,
+                                    "sender": sender,
+                                    "project": self.project_manager.current_project,
+                                    "wing": inferred["wing"],
+                                    "room": inferred["room"],
+                                    "memory_type": inferred["memory_type"],
+                                    "confidence": inferred["confidence"],
+                                },
+                                daemon=True,
+                            ).start()
+                        else:
+                            self.memory_policy_stats["duplicates"] += 1
+                            print(f"[MEMORY] auto-save skipped duplicate ({dup_reason})")
+                    else:
+                        self.memory_policy_stats["filtered"] += 1
+                        print(f"[MEMORY] auto-save skipped by policy ({reason})")
                 except Exception as _me:
                     print(f"[MEMORY] store failed: {_me}")
             self.chat_buffer = {"sender": None, "text": ""}
@@ -360,6 +389,171 @@ class AudioLoop:
     def set_memory_locked(self, locked):
         self.memory_locked = bool(locked)
 
+    def _normalize_memory_label(self, value, fallback="general"):
+        raw = str(value or "").strip().lower()
+        normalized = re.sub(r"[^a-z0-9_]+", "_", raw).strip("_")
+        return normalized or fallback
+
+    def _resolve_memory_wing(self, explicit_wing=None):
+        if explicit_wing:
+            return self._normalize_memory_label(explicit_wing, fallback="general")
+
+        project = self._normalize_memory_label(self.project_manager.current_project, fallback="private")
+        if project in {"work", "office", "job", "client", "clients", "firma", "kunden"}:
+            return "work"
+        if project in {"private", "personal", "home", "temp", "default"}:
+            return "private"
+        if project.startswith("hobby_"):
+            return project
+        return f"hobby_{project}"
+
+    def _infer_memory_room(self, text):
+        payload = str(text or "").lower()
+        if not payload:
+            return "general"
+
+        room_patterns = [
+            ("decisions", ["we decided", "entscheidung", "decided", "final decision", "beschlossen"]),
+            ("tasks", ["todo", "task", "next step", "deadline", "ticket", "aufgabe"]),
+            ("preferences", ["i prefer", "preference", "ich mag", "ich bevorzuge", "setting"]),
+            ("contacts", ["meeting", "call", "kontakt", "email", "phone", "kunde", "kollege"]),
+            ("health", ["health", "doctor", "sleep", "medication", "fitness", "arzt"]),
+            ("finance", ["budget", "invoice", "cost", "expense", "price", "finanz", "rechnung"]),
+            ("shopping", ["buy", "order", "wishlist", "shop", "kaufen", "bestellen"]),
+            ("cad", ["cad", "stl", "mesh", "build123d", "extrude", "fillet", "sketch"]),
+            ("printer", ["printer", "slicer", "gcode", "nozzle", "klipper", "octoprint", "moonraker"]),
+            ("smart_home", ["kasa", "tapo", "light", "switch", "device", "smart home"]),
+        ]
+
+        for room_name, needles in room_patterns:
+            if any(token in payload for token in needles):
+                return room_name
+        return "general"
+
+    def _infer_memory_type(self, text, room):
+        payload = str(text or "").lower()
+        if room == "preferences" or any(x in payload for x in ["i prefer", "bevorzuge", "preference"]):
+            return "preference"
+        if room == "decisions" or any(x in payload for x in ["decided", "beschlossen", "decision"]):
+            return "decision"
+        if room == "tasks" or any(x in payload for x in ["todo", "task", "next step", "aufgabe"]):
+            return "task"
+        if any(x in payload for x in ["fact", "is ", "are ", "was ", "were "]):
+            return "fact"
+        return "note"
+
+    def _classify_memory(self, text, explicit_wing=None, explicit_room=None, explicit_memory_type=None, explicit_confidence=None):
+        room = self._normalize_memory_label(explicit_room, fallback="") if explicit_room else self._infer_memory_room(text)
+        if not room:
+            room = "general"
+
+        memory_type = (
+            self._normalize_memory_label(explicit_memory_type, fallback="")
+            if explicit_memory_type
+            else self._infer_memory_type(text, room)
+        )
+        if not memory_type:
+            memory_type = "note"
+
+        if explicit_confidence is None:
+            confidence = 0.8 if memory_type in {"decision", "preference", "task"} else 0.65
+        else:
+            try:
+                confidence = float(explicit_confidence)
+            except (TypeError, ValueError):
+                confidence = 0.65
+        confidence = max(0.0, min(confidence, 1.0))
+
+        return {
+            "wing": self._resolve_memory_wing(explicit_wing=explicit_wing),
+            "room": room,
+            "memory_type": memory_type,
+            "confidence": confidence,
+        }
+
+    def _normalize_memory_text(self, text):
+        lowered = str(text or "").strip().lower()
+        return re.sub(r"\s+", " ", lowered)
+
+    def _should_auto_store_memory(self, text, sender, inferred):
+        payload = str(text or "").strip()
+        if len(payload) < 24:
+            return False, "too_short"
+
+        token_count = len(payload.split())
+        if token_count < 4:
+            return False, "too_few_tokens"
+
+        normalized = self._normalize_memory_text(payload)
+        low_signal = {
+            "ok",
+            "okay",
+            "thanks",
+            "thank you",
+            "danke",
+            "passt",
+            "super",
+            "cool",
+            "ja",
+            "nein",
+        }
+        if normalized in low_signal:
+            return False, "low_signal"
+
+        memory_type = str(inferred.get("memory_type", "note"))
+        room = str(inferred.get("room", "general"))
+        sender_norm = str(sender or "").strip().lower()
+
+        if memory_type in {"decision", "task", "preference", "fact"}:
+            return True, "important_type"
+
+        if room in {"cad", "printer", "smart_home", "finance", "health", "contacts"} and len(payload) >= 30:
+            return True, "important_room"
+
+        if sender_norm in {"ada", "assistant", "model"} and memory_type == "note":
+            return False, "assistant_note_filtered"
+
+        if room == "general" and memory_type == "note":
+            return False, "generic_note_filtered"
+
+        if len(payload) >= 100:
+            return True, "long_note_kept"
+
+        return False, "fallback_filtered"
+
+    def _is_duplicate_memory(self, text, inferred):
+        memory_agent = self._ensure_memory_agent()
+        if not memory_agent:
+            return False, "memory_unavailable"
+
+        try:
+            recent = memory_agent.retrieve(
+                str(text or ""),
+                1,
+                self.project_manager.current_project,
+                inferred.get("wing"),
+                inferred.get("room"),
+                inferred.get("memory_type"),
+                max(0.0, float(inferred.get("confidence", 0.5)) - 0.25),
+            )
+        except Exception:
+            return False, "lookup_failed"
+
+        if not recent:
+            return False, "no_match"
+
+        top = recent[0] if isinstance(recent[0], dict) else {}
+        existing_text = self._normalize_memory_text(top.get("text", ""))
+        incoming_text = self._normalize_memory_text(text)
+        if incoming_text and incoming_text == existing_text:
+            return True, "exact_text"
+
+        distance = top.get("distance", None)
+        if isinstance(distance, (int, float)) and len(incoming_text) >= 30 and float(distance) <= 0.08:
+            return True, f"semantic_distance={float(distance):.4f}"
+
+        return False, "distinct"
+
     async def prepare_user_text_input(self, text):
         user_text = str(text or "").strip()
         if not user_text:
@@ -373,12 +567,24 @@ class AudioLoop:
             return user_text
 
         try:
+            inferred = self._classify_memory(user_text)
             memories = await asyncio.to_thread(
                 memory_agent.retrieve,
                 user_text,
                 3,
                 self.project_manager.current_project,
+                inferred["wing"],
+                None,
+                None,
+                0.35,
             )
+            if not memories:
+                memories = await asyncio.to_thread(
+                    memory_agent.retrieve,
+                    user_text,
+                    3,
+                    self.project_manager.current_project,
+                )
         except Exception as e:
             print(f"[MEMORY] retrieval failed: {e}")
             return user_text
@@ -391,10 +597,12 @@ class AudioLoop:
             meta = m.get("metadata", {}) if isinstance(m, dict) else {}
             sender = str(meta.get("sender", "Unknown"))
             ts = str(meta.get("timestamp", ""))[:16]
+            wing = str(meta.get("wing", "?"))
+            room = str(meta.get("room", "?"))
             snippet = str(m.get("text", "")).strip().replace("\n", " ")
             if len(snippet) > 220:
                 snippet = snippet[:217] + "..."
-            lines.append(f"- [{ts}] {sender}: {snippet}")
+            lines.append(f"- [{ts}] {sender} ({wing}/{room}): {snippet}")
 
         memory_context = "\n".join(lines)
         return (
@@ -405,7 +613,17 @@ class AudioLoop:
             "[/SYSTEM LONG-TERM MEMORY CONTEXT]"
         )
 
-    async def store_memory_entry(self, text, sender="User"):
+    async def store_memory_entry(
+        self,
+        text,
+        sender="User",
+        wing=None,
+        room=None,
+        memory_type=None,
+        confidence=None,
+        enforce_policy=False,
+        allow_duplicates=False,
+    ):
         payload = str(text or "").strip()
         if not payload or not self.long_term_memory_enabled or self.memory_locked:
             return False
@@ -415,16 +633,94 @@ class AudioLoop:
             return False
 
         try:
+            inferred = self._classify_memory(
+                payload,
+                explicit_wing=wing,
+                explicit_room=room,
+                explicit_memory_type=memory_type,
+                explicit_confidence=confidence,
+            )
+
+            if enforce_policy:
+                should_store, reason = self._should_auto_store_memory(payload, sender, inferred)
+                if not should_store:
+                    self.memory_policy_stats["filtered"] += 1
+                    print(f"[MEMORY] auto-save filtered ({reason})")
+                    return False
+
+            if not allow_duplicates:
+                is_dup, dup_reason = self._is_duplicate_memory(payload, inferred)
+                if is_dup:
+                    if enforce_policy:
+                        self.memory_policy_stats["duplicates"] += 1
+                    else:
+                        self.memory_policy_stats["manual_duplicates"] += 1
+                    print(f"[MEMORY] duplicate skipped ({dup_reason})")
+                    return False
+
             await asyncio.to_thread(
                 memory_agent.store,
                 payload,
                 sender,
                 self.project_manager.current_project,
+                inferred["wing"],
+                inferred["room"],
+                inferred["memory_type"],
+                inferred["confidence"],
             )
+            if enforce_policy:
+                self.memory_policy_stats["saved"] += 1
+            else:
+                self.memory_policy_stats["manual_saved"] += 1
             return True
         except Exception as e:
             print(f"[MEMORY] store failed: {e}")
             return False
+
+    async def get_memory_quality_report(self, sample_limit=1200):
+        report = {
+            "enabled": bool(self.long_term_memory_enabled),
+            "locked": bool(self.memory_locked),
+            "current_project": str(self.project_manager.current_project),
+            "current_wing": self._resolve_memory_wing(),
+            "policy_stats": dict(self.memory_policy_stats),
+            "quality": {},
+        }
+
+        if not self.long_term_memory_enabled:
+            report["message"] = "Long-term memory is disabled."
+            return report
+
+        memory_agent = self._ensure_memory_agent()
+        if not memory_agent:
+            report["message"] = "Memory backend unavailable."
+            return report
+
+        try:
+            quality = await asyncio.to_thread(
+                memory_agent.quality_report,
+                self.project_manager.current_project,
+                self._resolve_memory_wing(),
+                sample_limit,
+            )
+            report["quality"] = quality
+            report["total_entries"] = int(await asyncio.to_thread(memory_agent.count))
+            return report
+        except Exception as e:
+            report["message"] = f"Memory quality report failed: {e}"
+            return report
+
+    async def emit_memory_quality_panel(self, title="Memory Quality Report"):
+        report = await self.get_memory_quality_report(sample_limit=1200)
+        self.emit_tool_view(
+            {
+                "type": "memory_quality",
+                "title": title,
+                "report": report,
+                "status": "completed",
+            }
+        )
+        return report
 
     def set_paused(self, paused):
         self.paused = paused
@@ -2474,7 +2770,21 @@ class AudioLoop:
                                     query = str(fc.args.get("query", "") or "").strip()
                                     n_results = int(fc.args.get("n_results", 5) or 5)
                                     n_results = max(1, min(n_results, 10))
-                                    print(f"[ADA DEBUG] [TOOL] Tool Call: 'search_memory' query='{query}' n={n_results}")
+                                    wing = str(fc.args.get("wing", "") or "").strip() or None
+                                    room = str(fc.args.get("room", "") or "").strip() or None
+                                    memory_type = str(fc.args.get("memory_type", "") or "").strip() or None
+                                    min_conf_raw = fc.args.get("min_confidence", None)
+                                    min_confidence = None
+                                    if min_conf_raw is not None:
+                                        try:
+                                            min_confidence = float(min_conf_raw)
+                                        except (TypeError, ValueError):
+                                            min_confidence = None
+
+                                    print(
+                                        f"[ADA DEBUG] [TOOL] Tool Call: 'search_memory' "
+                                        f"query='{query}' n={n_results} wing='{wing}' room='{room}' type='{memory_type}'"
+                                    )
 
                                     if not self.long_term_memory_enabled:
                                         result_str = "Long-term memory is disabled in settings."
@@ -2499,21 +2809,39 @@ class AudioLoop:
                                         result_str = "Missing required field: query."
                                     else:
                                         try:
+                                            scope = self._classify_memory(
+                                                query,
+                                                explicit_wing=wing,
+                                                explicit_room=room,
+                                                explicit_memory_type=memory_type,
+                                            )
                                             memories = await asyncio.to_thread(
                                                 memory_agent.retrieve,
                                                 query,
                                                 n_results,
                                                 self.project_manager.current_project,
+                                                scope["wing"],
+                                                scope["room"] if room else None,
+                                                scope["memory_type"] if memory_type else None,
+                                                min_confidence,
                                             )
                                             if not memories:
                                                 result_str = "No relevant memories found."
                                             else:
-                                                lines = [f"Found {len(memories)} relevant memory entries:"]
+                                                lines = [
+                                                    f"Found {len(memories)} relevant memory entries "
+                                                    f"(wing={scope['wing']}, room={room or 'any'}, type={memory_type or 'any'}):"
+                                                ]
                                                 for m in memories:
                                                     meta = m.get("metadata", {})
                                                     sender = meta.get("sender", "?")
                                                     ts = meta.get("timestamp", "")[:16]
-                                                    lines.append(f"  [{ts}] {sender}: {m['text']}")
+                                                    row_wing = meta.get("wing", "?")
+                                                    row_room = meta.get("room", "?")
+                                                    row_type = meta.get("memory_type", "?")
+                                                    lines.append(
+                                                        f"  [{ts}] {sender} ({row_wing}/{row_room}/{row_type}): {m['text']}"
+                                                    )
                                                 result_str = "\n".join(lines)
                                         except Exception as e:
                                             result_str = f"Memory search failed: {e}"
@@ -2527,7 +2855,21 @@ class AudioLoop:
 
                                 elif fc.name == "save_to_memory":
                                     text = str(fc.args.get("text", "") or "").strip()
-                                    print(f"[ADA DEBUG] [TOOL] Tool Call: 'save_to_memory' text='{text[:80]}'")
+                                    wing = str(fc.args.get("wing", "") or "").strip() or None
+                                    room = str(fc.args.get("room", "") or "").strip() or None
+                                    memory_type = str(fc.args.get("memory_type", "") or "").strip() or None
+                                    confidence_raw = fc.args.get("confidence", None)
+                                    confidence = None
+                                    if confidence_raw is not None:
+                                        try:
+                                            confidence = float(confidence_raw)
+                                        except (TypeError, ValueError):
+                                            confidence = None
+
+                                    print(
+                                        f"[ADA DEBUG] [TOOL] Tool Call: 'save_to_memory' text='{text[:80]}' "
+                                        f"wing='{wing}' room='{room}' type='{memory_type}'"
+                                    )
 
                                     if not self.long_term_memory_enabled:
                                         result_str = "Long-term memory is disabled in settings."
@@ -2552,13 +2894,33 @@ class AudioLoop:
                                         result_str = "Missing required field: text."
                                     else:
                                         try:
-                                            await asyncio.to_thread(
-                                                memory_agent.store,
+                                            scope = self._classify_memory(
                                                 text,
-                                                "ADA",
-                                                self.project_manager.current_project,
+                                                explicit_wing=wing,
+                                                explicit_room=room,
+                                                explicit_memory_type=memory_type,
+                                                explicit_confidence=confidence,
                                             )
-                                            result_str = "Saved to long-term memory successfully."
+                                            stored = await self.store_memory_entry(
+                                                text,
+                                                sender="ADA",
+                                                wing=scope["wing"],
+                                                room=scope["room"],
+                                                memory_type=scope["memory_type"],
+                                                confidence=scope["confidence"],
+                                                enforce_policy=False,
+                                                allow_duplicates=False,
+                                            )
+                                            if stored:
+                                                result_str = (
+                                                    "Saved to long-term memory successfully "
+                                                    f"(wing={scope['wing']}, room={scope['room']}, type={scope['memory_type']})."
+                                                )
+                                            else:
+                                                result_str = (
+                                                    "Memory entry was not stored because it is likely a duplicate "
+                                                    "or blocked by memory state."
+                                                )
                                         except Exception as e:
                                             result_str = f"Failed to save to memory: {e}"
 
@@ -2588,14 +2950,17 @@ class AudioLoop:
                                                 result_str = "Long-term memory is enabled but not initialized yet."
                                         else:
                                             total = memory_agent.count()
+                                            current_wing = self._resolve_memory_wing()
                                             recent = memory_agent.get_recent(
                                                 n=3,
                                                 project=self.project_manager.current_project,
+                                                wing=current_wing,
                                             )
                                             lines = [
                                                 "Long-term memory status:",
                                                 f"- enabled: {self.long_term_memory_enabled}",
                                                 f"- locked: {self.memory_locked}",
+                                                f"- current wing: {current_wing}",
                                                 f"- entries (project): {len(recent)} recent shown",
                                                 f"- entries (total): {total}",
                                                 f"- storage: {memory_agent._persist_dir}",
@@ -2606,11 +2971,61 @@ class AudioLoop:
                                                     meta = m.get("metadata", {})
                                                     sender = meta.get("sender", "?")
                                                     ts = str(meta.get("timestamp", ""))[:16]
+                                                    room = str(meta.get("room", "?"))
+                                                    mtype = str(meta.get("memory_type", "?"))
                                                     preview = str(m.get("text", "")).strip().replace("\n", " ")
                                                     if len(preview) > 120:
                                                         preview = preview[:117] + "..."
-                                                    lines.append(f"- [{ts}] {sender}: {preview}")
+                                                    lines.append(f"- [{ts}] {sender} ({room}/{mtype}): {preview}")
                                             result_str = "\n".join(lines)
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "show_memory_quality_view":
+                                    sample_limit = fc.args.get("sample_limit", 1200)
+                                    try:
+                                        sample_limit = int(sample_limit or 1200)
+                                    except Exception:
+                                        sample_limit = 1200
+                                    sample_limit = max(50, min(sample_limit, 5000))
+
+                                    print(
+                                        f"[ADA DEBUG] [TOOL] Tool Call: 'show_memory_quality_view' "
+                                        f"sample_limit={sample_limit}"
+                                    )
+
+                                    if not self.long_term_memory_enabled:
+                                        result_str = "Long-term memory is disabled in settings."
+                                    else:
+                                        memory_agent = self._ensure_memory_agent()
+                                        if not memory_agent:
+                                            result_str = "Long-term memory is not available. Install chromadb to enable it."
+                                        else:
+                                            report = await self.get_memory_quality_report(sample_limit=sample_limit)
+                                            self.emit_tool_view(
+                                                {
+                                                    "type": "memory_quality",
+                                                    "title": "Memory Quality Report",
+                                                    "report": report,
+                                                    "status": "completed",
+                                                }
+                                            )
+
+                                            msg = str(report.get("message", "") or "").strip()
+                                            if msg:
+                                                result_str = f"Memory quality panel opened with warning: {msg}"
+                                            else:
+                                                quality = report.get("quality", {}) or {}
+                                                result_str = (
+                                                    "Memory quality panel opened in detail view. "
+                                                    f"Sample={quality.get('sampled_entries', 0)}, "
+                                                    f"avg_confidence={quality.get('avg_confidence', 0)}."
+                                                )
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,
@@ -2775,9 +3190,11 @@ class AudioLoop:
                         # Inject relevant long-term memories for this session.
                         if self.memory and self.memory.count() > 0 and not self.memory_locked:
                             try:
+                                current_wing = self._resolve_memory_wing()
                                 recent = self.memory.get_recent(
                                     n=12,
                                     project=self.project_manager.current_project,
+                                    wing=current_wing,
                                 )
                                 if recent:
                                     lines = ["System Notification: Long-term memory loaded. Relevant past context:"]
@@ -2785,7 +3202,8 @@ class AudioLoop:
                                         meta = m.get("metadata", {})
                                         sender = meta.get("sender", "?")
                                         ts = meta.get("timestamp", "")[:16]
-                                        lines.append(f"  [{ts}] {sender}: {m['text']}")
+                                        room = meta.get("room", "?")
+                                        lines.append(f"  [{ts}] {sender} ({current_wing}/{room}): {m['text']}")
                                     mem_block = "\n".join(lines)
                                     print(f"[MEMORY] Injecting {len(recent)} memories into session context.")
                                     await self.session.send(input=mem_block, end_of_turn=True)

@@ -116,6 +116,7 @@ DEFAULT_SETTINGS = {
         "search_memory": True,
         "save_to_memory": True,
         "memory_status": False,
+        "show_memory_quality_view": True,
         "list_calendar_events": True,
         "get_calendar_view": True,
         "create_calendar_event": True,
@@ -773,6 +774,28 @@ async def user_input(sid, data):
         return
 
     if text:
+        normalized_text = str(text).strip().lower()
+        memory_quality_patterns = [
+            r"\b(memory\s+quality\s+check|check\s+memory\s+quality)\b",
+            r"\b(memory\s*check|ged[äa]chtn(?:is|iss)\s*check)\b",
+            r"\bmemory\s+status\b",
+            r"\b(pr[üu]fe|checke?|analysiere)\b.*\b(ged[äa]chtn(?:is|iss)|memory)\b",
+        ]
+        if any(re.search(pattern, normalized_text) for pattern in memory_quality_patterns):
+            if hasattr(audio_loop, "emit_memory_quality_panel"):
+                report = await audio_loop.emit_memory_quality_panel(title="Memory Quality Report")
+                msg = str(report.get("message", "") or "").strip()
+                await sio.emit(
+                    'status',
+                    {
+                        'msg': msg or 'Memory quality check complete. Detail view updated.'
+                    },
+                    room=sid,
+                )
+            else:
+                await sio.emit('error', {'msg': 'Memory quality panel is not available in the current session.'}, room=sid)
+            return
+
         print(f"[SERVER DEBUG] Sending message to model: '{text}'")
         
         # Log User Input to Project History
@@ -780,7 +803,14 @@ async def user_input(sid, data):
             audio_loop.project_manager.log_chat("User", text)
             if hasattr(audio_loop, "store_memory_entry"):
                 # First-time memory embedding can trigger model download; do not block user turn.
-                asyncio.create_task(audio_loop.store_memory_entry(text, sender="User"))
+                asyncio.create_task(
+                    audio_loop.store_memory_entry(
+                        text,
+                        sender="User",
+                        enforce_policy=True,
+                        allow_duplicates=False,
+                    )
+                )
 
         text_for_model = text
         if hasattr(audio_loop, "prepare_user_text_input"):
@@ -1328,6 +1358,72 @@ async def get_long_term_memory_count(sid, data=None):
         await sio.emit('long_term_memory_count_result', {'ok': True, 'count': count}, room=sid)
     except Exception as e:
         await sio.emit('long_term_memory_count_result', {'ok': False, 'count': 0, 'message': f'Failed to read memory count: {str(e)}'}, room=sid)
+
+
+@sio.event
+async def get_memory_quality_report(sid, data=None):
+    if not audio_loop or not hasattr(audio_loop, "get_memory_quality_report"):
+        await sio.emit(
+            'memory_quality_report_result',
+            {
+                'ok': False,
+                'message': 'Audio session not running. Start ADA first for a live quality report.',
+                'report': {},
+            },
+            room=sid,
+        )
+        return
+
+    sample_limit = 1200
+    if isinstance(data, dict) and data.get("sample_limit") is not None:
+        try:
+            sample_limit = int(data.get("sample_limit"))
+        except Exception:
+            sample_limit = 1200
+
+    try:
+        report = await audio_loop.get_memory_quality_report(sample_limit=sample_limit)
+        await sio.emit(
+            'memory_quality_report_result',
+            {
+                'ok': True,
+                'report': report,
+                'message': str(report.get("message", "") or ""),
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'memory_quality_report_result',
+            {
+                'ok': False,
+                'report': {},
+                'message': f'Failed to build memory quality report: {str(e)}',
+            },
+            room=sid,
+        )
+
+
+@sio.event
+async def trigger_memory_quality_panel(sid, data=None):
+    if not audio_loop or not hasattr(audio_loop, "emit_memory_quality_panel"):
+        await sio.emit('memory_quality_report_result', {'ok': False, 'message': 'Start ADA first to open the live memory panel.'}, room=sid)
+        return
+
+    try:
+        report = await audio_loop.emit_memory_quality_panel(title="Memory Quality Report")
+        await sio.emit(
+            'memory_quality_report_result',
+            {
+                'ok': True,
+                'report': report,
+                'message': str(report.get("message", "") or ""),
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit('memory_quality_report_result', {'ok': False, 'message': f'Failed to open memory panel: {str(e)}'}, room=sid)
+        return
 
 
 @sio.event
