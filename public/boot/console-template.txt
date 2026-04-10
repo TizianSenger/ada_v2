@@ -1,0 +1,12 @@
+   ___    ____    ___        __      ____
+  / _ |  / __/   / _ | ___  / /____ / __/
+ / __ | _\ \   / __ |/ _ \/ __/ -_)\ \
+/_/ |_|/___/  /_/ |_|\___/\__/\__/___/
+
+[BOOT] Profile: ADA_V2
+[BOOT] Theme: CYAN_TERMINAL
+[BOOT] Security Layer: ACTIVE
+
+# Edit this file to customize splash terminal output.
+# You can add ANSI-like text, pseudo logs, or ASCII art.
+# The splash UI will stream these lines while startup checks are running.

@@ -16,6 +16,7 @@ import KasaWindow from './components/KasaWindow';
 import PrinterWindow from './components/PrinterWindow';
 import SettingsWindow from './components/SettingsWindow';
 import LeftToolView, { SystemCheckMatrix, MemoryQualityMatrix } from './components/LeftToolView';
+import BootSplash from './components/BootSplash';
 
 
 
@@ -117,6 +118,20 @@ function App() {
     });
     const [showSettings, setShowSettings] = useState(false);
     const [currentProject, setCurrentProject] = useState('default');
+    const [showBootSplash, setShowBootSplash] = useState(true);
+    const [bootEvents, setBootEvents] = useState([
+        '[BOOT] Initializing A.D.A runtime...',
+        '[BOOT] Waiting for backend handshake...',
+    ]);
+    const [bootState, setBootState] = useState({
+        socketConnected: socket.connected,
+        settingsLoaded: false,
+        devicesLoaded: false,
+        backendReady: false,
+        projectLoaded: false,
+        authResolved: localStorage.getItem('face_auth_enabled') !== 'true',
+        uiReady: false,
+    });
 
     // Modular Mode State
     const [isModularMode, setIsModularMode] = useState(false);
@@ -215,6 +230,40 @@ function App() {
     const lastPinchingRef = useRef(false);
     const snapTargetsRef = useRef([]);
     const lastSnapScanAtRef = useRef(0);
+    const bootStartAtRef = useRef(Date.now());
+    const bootCompleteHandledRef = useRef(false);
+
+    const pushBootEvent = (line) => {
+        const msg = String(line || '').trim();
+        if (!msg) return;
+        setBootEvents(prev => {
+            if (prev[prev.length - 1] === msg) {
+                return prev;
+            }
+            const next = [...prev, msg];
+            return next.slice(-120);
+        });
+    };
+
+    const markBootState = (key, value, logLine) => {
+        setBootState(prev => {
+            if (prev[key] === value) {
+                return prev;
+            }
+            return { ...prev, [key]: value };
+        });
+        if (logLine) {
+            pushBootEvent(logLine);
+        }
+    };
+
+    const bootReady = Boolean(
+        bootState.socketConnected &&
+        bootState.settingsLoaded &&
+        bootState.devicesLoaded &&
+        bootState.backendReady &&
+        bootState.projectLoaded
+    );
 
     // Update refs when state changes
     useEffect(() => {
@@ -245,6 +294,51 @@ function App() {
         }, 1000);
         return () => clearInterval(timer);
     }, []);
+
+    useEffect(() => {
+        if (!showBootSplash || bootState.projectLoaded) {
+            return;
+        }
+
+        const timeoutId = setTimeout(() => {
+            markBootState('projectLoaded', true, '[BOOT] Project context synced (startup fallback).');
+        }, 5000);
+
+        return () => clearTimeout(timeoutId);
+    }, [showBootSplash, bootState.projectLoaded]);
+
+    useEffect(() => {
+        if (status === 'Model Connected') {
+            markBootState('backendReady', true, '[BOOT] Model session connected.');
+        }
+    }, [status]);
+
+    useEffect(() => {
+        if (!showBootSplash || !bootReady || bootCompleteHandledRef.current) {
+            return;
+        }
+
+        bootCompleteHandledRef.current = true;
+        markBootState('uiReady', true, '[BOOT] UI synchronization complete.');
+
+        const elapsed = Date.now() - bootStartAtRef.current;
+        const minSplashMs = 2600;
+        const waitMs = Math.max(250, minSplashMs - elapsed);
+
+        const timeoutId = setTimeout(() => {
+            setShowBootSplash(false);
+            setMessages(prev => ([
+                ...prev,
+                {
+                    sender: 'ADA',
+                    text: 'All systems loaded, ready to start sir. With what can I assist you?',
+                    time: new Date().toLocaleTimeString(),
+                }
+            ]));
+        }, waitMs);
+
+        return () => clearTimeout(timeoutId);
+    }, [showBootSplash, bootReady]);
 
     // Centering Logic (Startup & Resize)
     useEffect(() => {
@@ -490,18 +584,22 @@ function App() {
         socket.on('connect', () => {
             setStatus('Connected');
             setSocketConnected(true);
+            markBootState('socketConnected', true, '[BOOT] Socket connected.');
             socket.emit('get_settings');
         });
         socket.on('disconnect', () => {
             setStatus('Disconnected');
             setSocketConnected(false);
+            pushBootEvent('[BOOT] Socket disconnected. Retrying...');
         });
         socket.on('status', (data) => {
             addMessage('System', data.msg);
+            pushBootEvent(`[SERVER] ${data.msg}`);
             updateQuotaInfoFromMessage(data.msg, 'status');
             // Update status bar based on backend messages
             if (data.msg === 'A.D.A Started') {
                 setStatus('Model Connected');
+                markBootState('backendReady', true, '[BOOT] Backend audio loop online.');
                 relockRestoreRef.current.reconnectInProgress = false;
             } else if (data.msg === 'A.D.A Stopped') {
                 setStatus('Connected');
@@ -517,6 +615,7 @@ function App() {
         socket.on('auth_status', (data) => {
             console.log("Auth Status:", data);
             setIsAuthenticated(data.authenticated);
+            markBootState('authResolved', true, '[BOOT] Authentication state received.');
             if (data.authenticated) {
                 // If authenticated, hide lock screen with animation (handled by component if visible)
                 // But simpler: just hide it
@@ -535,6 +634,7 @@ function App() {
 
         socket.on('settings', (settings) => {
             console.log("[Settings] Received:", settings);
+            markBootState('settingsLoaded', true, '[BOOT] Settings loaded.');
             if (settings && typeof settings.face_auth_enabled !== 'undefined') {
                 setFaceAuthEnabled(settings.face_auth_enabled);
                 localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
@@ -744,6 +844,7 @@ function App() {
         socket.on('project_update', (data) => {
             console.log("Project Update:", data.project);
             setCurrentProject(data.project);
+            markBootState('projectLoaded', true, `[BOOT] Active project: ${data.project}`);
             addMessage('System', `Switched to project: ${data.project}`);
         });
 
@@ -973,6 +1074,11 @@ function App() {
             } else if (videoInputs.length > 0) {
                 setSelectedWebcamId(videoInputs[0].deviceId);
             }
+
+            markBootState('devicesLoaded', true, `[BOOT] Media devices ready (mic=${audioInputs.length}, spk=${audioOutputs.length}, cam=${videoInputs.length}).`);
+        }).catch((err) => {
+            console.warn('[BOOT] Device enumeration failed:', err);
+            markBootState('devicesLoaded', true, '[BOOT] Media device scan failed, continuing startup.');
         });
 
         // Initialize Hand Landmarker
@@ -1108,6 +1214,7 @@ function App() {
     useEffect(() => {
         if (socket.connected) {
             setStatus('Connected');
+            markBootState('socketConnected', true, '[BOOT] Socket already connected.');
             socket.emit('get_settings');
         }
     }, []);
@@ -1918,6 +2025,14 @@ function App() {
 
     return (
         <div className="h-screen w-screen bg-black text-cyan-100 font-mono overflow-hidden flex flex-col relative selection:bg-cyan-900 selection:text-white">
+
+            {showBootSplash && (
+                <BootSplash
+                    ready={bootReady}
+                    bootState={bootState}
+                    lines={bootEvents}
+                />
+            )}
 
             {/* --- PREMIUM UI LAYER --- */}
 
