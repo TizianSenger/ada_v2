@@ -166,6 +166,7 @@ def _build_live_config(voice_name: str):
             "You should sound warm, friendly, witty, and human in conversation. "
             "Use light humor, charm, and natural phrasing when appropriate so the interaction feels personal and pleasant. "
             "Show empathy and emotional intelligence in tone while staying concise and useful. "
+            "Do not initiate conversation on your own. At startup or after connect, stay silent until the user provides the first input. "
             "Always be cooperative, obedient to user intent, and solution-oriented. "
             "Do not be defiant, snobbish, argumentative, or dismissive. "
             "Do not complain about user requests; help proactively and execute requested tasks whenever possible. "
@@ -3349,7 +3350,7 @@ class AudioLoop:
                                         lines.append(f"  [{ts}] {sender} ({current_wing}/{room}): {m['text']}")
                                     mem_block = "\n".join(lines)
                                     print(f"[MEMORY] Injecting {len(recent)} memories into session context.")
-                                    await self.session.send(input=mem_block, end_of_turn=True)
+                                    await self.session.send(input=mem_block, end_of_turn=False)
                             except Exception as _me:
                                 print(f"[MEMORY] Context injection failed: {_me}")
                         
