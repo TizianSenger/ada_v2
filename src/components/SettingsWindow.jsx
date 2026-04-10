@@ -148,6 +148,18 @@ const CALENDAR_MAIL_TOOL_IDS = [
 
 const TAB_BUTTON = 'px-3 py-1.5 text-xs rounded-md border transition-colors';
 const VOICE_OPTIONS = ['Kore', 'Orus', 'Fenrir', 'Charon', 'Puck', 'Aoede'];
+const SPLASH_THEME_OPTIONS = [
+    {
+        id: 'CYAN_TERMINAL',
+        label: 'Classic Cyan Terminal',
+        description: 'Original cyan console style with clean scanline motion.',
+    },
+    {
+        id: 'CINEMATIC_CRT',
+        label: 'Cinematic CRT',
+        description: 'Film-like boot look with glitch pulses, CRT lines, and vignette.',
+    },
+];
 
 const ToggleRow = ({ label, enabled, onToggle }) => (
     <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
@@ -227,6 +239,9 @@ const SettingsWindow = ({
     const [activeTab, setActiveTab] = useState('general');
     const [activeToolGroup, setActiveToolGroup] = useState('Core');
     const [windowPos, setWindowPos] = useState({ x: 40, y: 84 });
+    const [bootSplashTheme, setBootSplashTheme] = useState('CINEMATIC_CRT');
+    const [bootSplashThemeBusy, setBootSplashThemeBusy] = useState(false);
+    const [bootSplashThemeMessage, setBootSplashThemeMessage] = useState('');
 
     const dragRef = useRef({ active: false, offsetX: 0, offsetY: 0 });
     const faceSetupVideoRef = useRef(null);
@@ -356,13 +371,39 @@ const SettingsWindow = ({
             }
         };
 
+        const handleBootSplashThemeResult = (result) => {
+            const ok = Boolean(result?.ok);
+            const theme = String(result?.theme || '').trim().toUpperCase();
+            if (theme) {
+                setBootSplashTheme(theme === 'CYAN_TERMINAL' ? 'CYAN_TERMINAL' : 'CINEMATIC_CRT');
+            }
+            if (ok && result?.message) {
+                setBootSplashThemeMessage(String(result.message));
+            }
+        };
+
+        const handleBootSplashThemeSaved = (result) => {
+            const ok = Boolean(result?.ok);
+            setBootSplashThemeBusy(false);
+            const theme = String(result?.theme || '').trim().toUpperCase();
+            if (theme) {
+                setBootSplashTheme(theme === 'CYAN_TERMINAL' ? 'CYAN_TERMINAL' : 'CINEMATIC_CRT');
+            }
+            setBootSplashThemeMessage(
+                String(result?.message || (ok ? 'Boot splash theme updated.' : 'Failed to update boot splash theme.'))
+            );
+        };
+
         socket.on('settings', handleSettings);
         socket.on('google_workspace_connection_result', handleGoogleConnectionResult);
         socket.on('face_setup_result', handleFaceSetupResult);
         socket.on('clear_long_term_memory_result', handleClearMemoryResult);
         socket.on('long_term_memory_count_result', handleMemoryCountResult);
         socket.on('memory_quality_report_result', handleMemoryQualityResult);
+        socket.on('boot_splash_theme_result', handleBootSplashThemeResult);
+        socket.on('boot_splash_theme_saved', handleBootSplashThemeSaved);
         socket.emit('get_long_term_memory_count');
+        socket.emit('get_boot_splash_theme');
         // Also listen for legacy tool_permissions if needed, but 'settings' covers it
         // socket.on('tool_permissions', handlePermissions); 
 
@@ -373,6 +414,8 @@ const SettingsWindow = ({
             socket.off('clear_long_term_memory_result', handleClearMemoryResult);
             socket.off('long_term_memory_count_result', handleMemoryCountResult);
             socket.off('memory_quality_report_result', handleMemoryQualityResult);
+            socket.off('boot_splash_theme_result', handleBootSplashThemeResult);
+            socket.off('boot_splash_theme_saved', handleBootSplashThemeSaved);
         };
     }, [socket]);
 
@@ -705,6 +748,65 @@ const SettingsWindow = ({
         setTapoPasswordConfigured(Boolean(enteredPassword) || tapoPasswordConfigured);
         setTapoMessage('TP-Link/Tapo Account gespeichert. Danach Discover Devices ausfuehren.');
     };
+
+    const saveBootSplashTheme = () => {
+        const theme = String(bootSplashTheme || '').trim().toUpperCase() === 'CYAN_TERMINAL'
+            ? 'CYAN_TERMINAL'
+            : 'CINEMATIC_CRT';
+        setBootSplashThemeBusy(true);
+        setBootSplashThemeMessage('Saving splash theme to template file...');
+        socket.emit('set_boot_splash_theme', { theme });
+    };
+
+    const refreshBootSplashTheme = () => {
+        setBootSplashThemeMessage('Loading splash theme from template file...');
+        socket.emit('get_boot_splash_theme');
+    };
+
+    const renderSplashTab = () => (
+        <div className="space-y-5">
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Boot Splash Theme</h3>
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <div className="text-[10px] text-cyan-500/70 mb-2">
+                        This writes [BOOT] Theme directly into public/boot/console-template.txt.
+                    </div>
+
+                    <select
+                        value={bootSplashTheme}
+                        onChange={(e) => setBootSplashTheme(e.target.value)}
+                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                    >
+                        {SPLASH_THEME_OPTIONS.map((option) => (
+                            <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                    </select>
+
+                    <p className="mt-2 text-[10px] text-cyan-400/85">
+                        {SPLASH_THEME_OPTIONS.find((option) => option.id === bootSplashTheme)?.description}
+                    </p>
+
+                    <div className="flex items-center justify-end gap-2 mt-3">
+                        <button
+                            onClick={refreshBootSplashTheme}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-900/70 hover:bg-cyan-800 text-white"
+                        >
+                            Reload From File
+                        </button>
+                        <button
+                            onClick={saveBootSplashTheme}
+                            disabled={bootSplashThemeBusy}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                        >
+                            {bootSplashThemeBusy ? 'Saving...' : 'Save Splash Theme'}
+                        </button>
+                    </div>
+
+                    {bootSplashThemeMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{bootSplashThemeMessage}</p>}
+                </div>
+            </div>
+        </div>
+    );
 
     const renderGeneralTab = () => (
         <div className="space-y-5">
@@ -1382,6 +1484,12 @@ const SettingsWindow = ({
                     >
                         Memory
                     </button>
+                    <button
+                        onClick={() => setActiveTab('splash')}
+                        className={`${TAB_BUTTON} ${activeTab === 'splash' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                    >
+                        Splash Screen
+                    </button>
                 </div>
 
                 <div
@@ -1395,6 +1503,7 @@ const SettingsWindow = ({
                     {activeTab === 'smart-home' && renderSmartHomeTab()}
                     {activeTab === 'tools' && renderToolsTab()}
                     {activeTab === 'memory' && renderMemoryTab()}
+                    {activeTab === 'splash' && renderSplashTab()}
                 </div>
             </div>
 

@@ -129,6 +129,8 @@ function App() {
         devicesLoaded: false,
         backendReady: false,
         projectLoaded: false,
+        smartDevicesRequired: false,
+        smartDevicesLoaded: true,
         authResolved: localStorage.getItem('face_auth_enabled') !== 'true',
         uiReady: false,
     });
@@ -232,6 +234,8 @@ function App() {
     const lastSnapScanAtRef = useRef(0);
     const bootStartAtRef = useRef(Date.now());
     const bootCompleteHandledRef = useRef(false);
+    const showBootSplashRef = useRef(true);
+    const lastProjectUpdateRef = useRef({ name: null, at: 0 });
 
     const pushBootEvent = (line) => {
         const msg = String(line || '').trim();
@@ -262,8 +266,19 @@ function App() {
         bootState.settingsLoaded &&
         bootState.devicesLoaded &&
         bootState.backendReady &&
-        bootState.projectLoaded
+        bootState.projectLoaded &&
+        (!bootState.smartDevicesRequired || bootState.smartDevicesLoaded)
     );
+
+    const shouldDisplaySystemChatMessage = (msg) => {
+        const text = String(msg || '').trim();
+        if (!text) return false;
+        if (showBootSplashRef.current) return false;
+
+        const lowered = text.toLowerCase();
+        if (lowered === 'a.d.a started') return false;
+        return true;
+    };
 
     // Update refs when state changes
     useEffect(() => {
@@ -286,6 +301,10 @@ function App() {
     useEffect(() => {
         leftPanelViewRef.current = leftPanelView;
     }, [leftPanelView]);
+
+    useEffect(() => {
+        showBootSplashRef.current = showBootSplash;
+    }, [showBootSplash]);
 
     // Live Clock Update
     useEffect(() => {
@@ -327,14 +346,14 @@ function App() {
 
         const timeoutId = setTimeout(() => {
             setShowBootSplash(false);
-            setMessages(prev => ([
-                ...prev,
+            // Fresh chat start after boot to avoid startup noise (status/project init logs).
+            setMessages([
                 {
                     sender: 'ADA',
                     text: 'All systems loaded, ready to start sir. With what can I assist you?',
                     time: new Date().toLocaleTimeString(),
                 }
-            ]));
+            ]);
         }, waitMs);
 
         return () => clearTimeout(timeoutId);
@@ -593,7 +612,9 @@ function App() {
             pushBootEvent('[BOOT] Socket disconnected. Retrying...');
         });
         socket.on('status', (data) => {
-            addMessage('System', data.msg);
+            if (shouldDisplaySystemChatMessage(data?.msg)) {
+                addMessage('System', data.msg);
+            }
             pushBootEvent(`[SERVER] ${data.msg}`);
             updateQuotaInfoFromMessage(data.msg, 'status');
             // Update status bar based on backend messages
@@ -601,6 +622,8 @@ function App() {
                 setStatus('Model Connected');
                 markBootState('backendReady', true, '[BOOT] Backend audio loop online.');
                 relockRestoreRef.current.reconnectInProgress = false;
+            } else if (/found\s+\d+\s+smart devices/i.test(String(data.msg || ''))) {
+                markBootState('smartDevicesLoaded', true, `[BOOT] ${data.msg}`);
             } else if (data.msg === 'A.D.A Stopped') {
                 setStatus('Connected');
             }
@@ -635,6 +658,31 @@ function App() {
         socket.on('settings', (settings) => {
             console.log("[Settings] Received:", settings);
             markBootState('settingsLoaded', true, '[BOOT] Settings loaded.');
+
+            const resolvedToolEnabled =
+                (settings && settings.tool_enabled && typeof settings.tool_enabled === 'object')
+                    ? settings.tool_enabled
+                    : ((settings && settings.tool_permissions && typeof settings.tool_permissions === 'object')
+                        ? settings.tool_permissions
+                        : {});
+
+            const smartHomeEnabledFromSettings =
+                resolvedToolEnabled?.list_smart_devices !== false ||
+                resolvedToolEnabled?.control_light !== false;
+
+            markBootState(
+                'smartDevicesRequired',
+                smartHomeEnabledFromSettings,
+                smartHomeEnabledFromSettings
+                    ? '[BOOT] Smart-home discovery required for startup.'
+                    : '[BOOT] Smart-home discovery skipped (tools disabled).'
+            );
+            if (!smartHomeEnabledFromSettings) {
+                markBootState('smartDevicesLoaded', true, '[BOOT] Smart-home step marked complete.');
+            } else {
+                markBootState('smartDevicesLoaded', false, '[BOOT] Waiting for smart-device discovery...');
+            }
+
             if (settings && typeof settings.face_auth_enabled !== 'undefined') {
                 setFaceAuthEnabled(settings.face_auth_enabled);
                 localStorage.setItem('face_auth_enabled', settings.face_auth_enabled);
@@ -822,6 +870,7 @@ function App() {
             }
             console.log("Kasa Devices:", devices);
             setKasaDevices(devices);
+            markBootState('smartDevicesLoaded', true, `[BOOT] Smart-device discovery complete (${Array.isArray(devices) ? devices.length : 0} found).`);
         });
 
         socket.on('kasa_update', (data) => {
@@ -845,7 +894,15 @@ function App() {
             console.log("Project Update:", data.project);
             setCurrentProject(data.project);
             markBootState('projectLoaded', true, `[BOOT] Active project: ${data.project}`);
-            addMessage('System', `Switched to project: ${data.project}`);
+
+            const now = Date.now();
+            const prev = lastProjectUpdateRef.current;
+            const isDuplicate = prev.name === data.project && (now - prev.at) < 3000;
+            lastProjectUpdateRef.current = { name: data.project, at: now };
+
+            if (!isDuplicate && !showBootSplashRef.current) {
+                addMessage('System', `Switched to project: ${data.project}`);
+            }
         });
 
         socket.on('left_panel_view', (data) => {

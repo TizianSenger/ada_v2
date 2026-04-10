@@ -355,6 +355,69 @@ def save_settings():
     except Exception as e:
         print(f"Error saving settings: {e}")
 
+
+def _boot_template_file_path() -> Path:
+    project_root = Path(BASE_DIR).parent
+    return project_root / "public" / "boot" / "console-template.txt"
+
+
+def _normalize_boot_theme(raw_theme: str) -> str:
+    value = str(raw_theme or "").strip().upper()
+    return "CINEMATIC_CRT" if value == "CINEMATIC_CRT" else "CYAN_TERMINAL"
+
+
+def _read_boot_theme_from_template() -> str:
+    template_path = _boot_template_file_path()
+    if not template_path.exists():
+        return "CINEMATIC_CRT"
+
+    try:
+        lines = template_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return "CINEMATIC_CRT"
+
+    for line in lines:
+        if line.lower().startswith("[boot] theme:"):
+            return _normalize_boot_theme(line.split(":", 1)[1] if ":" in line else "")
+    return "CINEMATIC_CRT"
+
+
+def _write_boot_theme_to_template(theme: str) -> Path:
+    target_theme = _normalize_boot_theme(theme)
+    template_path = _boot_template_file_path()
+    template_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if template_path.exists():
+        try:
+            lines = template_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            lines = []
+    else:
+        lines = []
+
+    if not lines:
+        lines = [
+            "[BOOT] Profile: ADA_V2",
+            f"[BOOT] Theme: {target_theme}",
+            "[BOOT] Security Layer: ACTIVE",
+            "",
+            "# Edit this file to customize splash terminal output.",
+        ]
+    else:
+        updated = False
+        for idx, line in enumerate(lines):
+            if line.lower().startswith("[boot] theme:"):
+                lines[idx] = f"[BOOT] Theme: {target_theme}"
+                updated = True
+                break
+
+        if not updated:
+            insert_at = 1 if len(lines) >= 1 else 0
+            lines.insert(insert_at, f"[BOOT] Theme: {target_theme}")
+
+    template_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return template_path
+
 # Load on startup
 load_settings()
 SETTINGS["face_reference_configured"] = os.path.exists(REFERENCE_IMAGE_FILE)
@@ -1334,6 +1397,54 @@ async def control_home(sid, data):
 @sio.event
 async def get_settings(sid):
     await sio.emit('settings', _settings_for_client())
+
+
+@sio.event
+async def get_boot_splash_theme(sid, data=None):
+    try:
+        theme = _read_boot_theme_from_template()
+        await sio.emit(
+            'boot_splash_theme_result',
+            {
+                'ok': True,
+                'theme': theme,
+                'message': f'Boot splash theme loaded: {theme}',
+                'path': str(_boot_template_file_path()),
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'boot_splash_theme_result',
+            {'ok': False, 'theme': 'CINEMATIC_CRT', 'message': f'Failed to read splash theme: {str(e)}'},
+            room=sid,
+        )
+
+
+@sio.event
+async def set_boot_splash_theme(sid, data=None):
+    payload = data or {}
+    requested_theme = payload.get('theme', 'CINEMATIC_CRT')
+    normalized = _normalize_boot_theme(requested_theme)
+
+    try:
+        path = _write_boot_theme_to_template(normalized)
+        await sio.emit(
+            'boot_splash_theme_saved',
+            {
+                'ok': True,
+                'theme': normalized,
+                'message': f'Boot splash theme saved: {normalized}',
+                'path': str(path),
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'boot_splash_theme_saved',
+            {'ok': False, 'theme': normalized, 'message': f'Failed to save splash theme: {str(e)}'},
+            room=sid,
+        )
 
 
 @sio.event
