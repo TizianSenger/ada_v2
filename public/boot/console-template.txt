@@ -1,182 +1,28 @@
-   ___    ____    ___        __      ____
-  / _ |  / __/   / _ | ___  / /____ / __/
- / __ | _\ \   / __ |/ _ \/ __/ -_)\ \
-/_/ |_|/___/  /_/ |_|\___/\__/\__/___/
-
 [BOOT] Profile: ADA_V2
-[BOOT] Theme: CYAN_TERMINAL
+[BOOT] Theme: CINEMATIC_CRT
 [BOOT] Security Layer: ACTIVE
 
-[INIT] Bootloader sequence started…
-[OK] Loading virtual kernel modules…
-[DBG] Allocating temp buffer @0x000000F12A…
-[OK] Buffer ready
-[SYS] Scanning subsystem integrity...
-[OK] Subsystem integrity: 99.993%
-[LOG] Mounting pseudo-filesystem /px/sys...
-[OK] Filesystem mounted
-[DBG] Sync pulse stabilized (3.882ms)
-[PROC] Dispatching initialization tasks…
-[OK] Task dispatcher online
-[NET] Opening virtual bus channel...
-[OK] Channel ID: 7F-22-98-AA
-[LOG] Handshake response received
-[CRYPTO] Negotiating ephemeral key…
-[OK] Key generated: 7a9f3e-c12d-5501-aacc
-[DBG] Injecting entropy seeds...
-[SEED] 0x11 0x92 0xFE 0x33 0x7A 0x00 0x8B 0x4C
-[SEED] 0x9A 0xF1 0xD2 0xCD 0xEF 0x04 0x2A 0x11
-[OK] Entropy pool full
-[CPU] Enabling multi-core virtualization...
-[OK] 8 virtual cores online
-[KERN] Loading modules (1/42): core_utils…
-[KERN] Loading modules (2/42): memmgr…
-[KERN] Loading modules (3/42): px_io…
-[KERN] Loading modules (4/42): netstack…
-[KERN] Loading modules (5/42): crypt_core…
-[KERN] Loading modules (6/42): gfx_stub…
-…
-[KERN] Loading modules (42/42): sandbox…
-[OK] All modules loaded successfully
-[DBG] Creating system message bus…
-[OK] Message bus ready
-[SYS] Running hardware probe (virtual)...
-[PROBE] GPU: PX‑SimRender v3.8
-[PROBE] CPU: VX‑8 Hybrid Array
-[PROBE] MEM: 16384MB pseudo‑RAM
-[PROBE] NET: VX‑Tunnel/12
-[OK] Probe finished
-[LOG] Calibrating virtual clock cycles…
-[OK] Δt sync achieved
-[FS] Indexing assets…
-[FS] /assets/core → scanned
-[FS] /assets/bin → scanned
-[FS] /assets/ui → scanned
-[FS] /assets/locales → scanned
-[OK] Index rebuild complete
-[DEV] Alloc table: 0xF0A1 size=4096
-…
-[HEX] Dump @0x00A0:
-0000: 7F 22 10 99 3A 10 44 81  2F 4C D2 10 AA 00 51 7E
-0010: A1 F2 22 15 19 0B 92 67  10 10 88 23 DE AD BE EF
-[OK] Dump complete
-[SYS] Warming up data channels…
-[OK] Channels stable
-[DBG] Running predictive boot pass…
-[PRED] Pass 1/3 → OK
-[PRED] Pass 2/3 → OK
-[PRED] Pass 3/3 → OK
-[OK] Predictive boot succeeded
-[AI] Bootstrapping inference microcore…
-[AI] Allocating tensors (17MB)…
-[AI] Loading operator set…
-[AI] Running integrity check…
-[OK] AI‑Core ready
-[NET] Pinging mirror node…
-[NET] Ping OK (latency: 1.22ms)
-[SYNC] Time sync offset: +000.0003s
-[OK] Sync stable
-[DBG] Preparing visual engine…
-[GFX] Loading shader 1/9…
-[GFX] Loading shader 2/9…
-[GFX] Loading shader 3/9…
-[GFX] Loading shader 4/9…
-[GFX] Loading shader 5/9…
-[GFX] Loading shader 6/9…
-[GFX] Loading shader 7/9…
-[GFX] Loading shader 8/9…
-[GFX] Loading shader 9/9…
-[OK] Shader pipeline online
-[SYS] Checking memory fragments…
-[FRAG] 12 blocks stale → cleaning…
-[OK] Fragments cleaned
-[PROC] Spawning worker threads…
-[OK] 37 worker threads operational
-[TASK] Initializing GUI tasks…
-…
-[TRACE] Stack trace snapshot:
-  0x0011A0 → main_init
-  0x0033B2 → sys_dispatch
-  0x0048FC → px_handle
-  0x00F112 → render_init
-[TRACE] End
-[CRYPT] Expanding keyset…
-[OK] Keyset updated
-[SIM] FPU virtualization online
-[SIM] I/O virtualization online
-[SIM] NET virtualization online
-[OK] All virtualization layers ready
-[FS] Watching directories for live changes…
-[OK] Watch service active
-[DBG] Allocating display buffers…
-[BFR] FrontBuffer: 1920×1080@32bit
-[BFR] BackBuffer : 1920×1080@32bit
-[OK] Buffers created
-[BOOT] Performing startup animation warmup…
-[OK] Warmup finished
-[SYS] Executing final checks…
+// Splash Script: Visual Boot Code
+public class AdaBoot {
+	public static void main(String[] args) {
+		System.out.println("initKernel() -> OK");
+		System.out.println("verifySecurityLayer() -> ACCEPTED");
+		System.out.println("connectSocket('ws://localhost:8000') -> CONNECTED");
+		System.out.println("mountWorkspace('/projects/temp') -> READY");
+	}
+}
 
---- FAKE TASK STREAM BEGIN ---
+# Python runtime probe
+def boot_sequence():
+	steps = [
+		"load_memory_cache() -> 38 entries",
+		"enumerate_devices() -> mic, cam, speaker",
+		"discover_smart_devices() -> 2 online",
+		"connect_live_model('gemini') -> CONNECTED",
+		"render_ui_layer('cinematic') -> READY",
+	]
+	for step in steps:
+		print(step)
 
-TASKpx_exec::initialize()................OK
-TASKpx_exec::calibrate()..................OK
-TASKpx_exec::mount_drivers()..............OK
-TASKpx_exec::load_profile(user=default)...OK
-TASKpx_exec::open_channel(0x01)...........OK
-TASKpx_exec::open_channel(0x02)...........OK
-TASKpx_exec::scan_modules()...............OK
-TASKpx_exec::seed_rng()...................OK
-TASKpx_exec::validate_rng()...............OK
-TASKpx_exec::vxhash_rebuild().............OK
-TASKpx_exec::cache_inflate()..............OK
-…
-TASKpx_exec::gfx_sync()...................OK
-TASKpx_exec::gfx_upload().................OK
-TASKpx_exec::gfx_verify().................OK
-TASKpx_exec::gfx_finalize()...............OK
-…
-TASKpx_exec::ai_prepare().................OK
-TASKpx_exec::ai_link()....................OK
-TASKpx_exec::ai_commit()..................OK
-…
-TASKpx_exec::net_resolve()................OK
-TASKpx_exec::net_sign()...................OK
-TASKpx_exec::net_validate()...............OK
-…
-TASKpx_exec::sandbox_init()...............OK
-TASKpx_exec::sandbox_verify().............OK
-TASKpx_exec::sandbox_finalize()...........OK
-
---- DATA STREAM ---
-
-[DATA] 14 91 A0 55 10 10 FF 10 00 AB 33 92 11 4A 55 FE
-[DATA] 00 A1 2B 44 11 00 28 55 29 AD 99 40 12 22 AE 11
-[DATA] [... 100 more lines of mixed hex, pseudo logs & telemetry …]
-
---- RANDOMIZED DIAGNOSTICS ---
-
-[DIAG] cycle:118 status:OK load:12% temp:33.2C
-[DIAG] cycle:119 status:OK load:13% temp:33.5C
-[DIAG] cycle:120 status:OK load:13% temp:33.4C
-[DIAG] cycle:121 status:OK load:14% temp:33.6C
-…
-[DIAG] cycle:244 status:OK load:09% temp:32.8C
-
---- FINALIZATION ---
-
-[SYSTEM] Preparing UI layer…
-[SYSTEM] Linking rendering stack…
-[SYSTEM] Registering event hooks…
-[SYSTEM] Performing final surface flip…
-[OK] System ready.
-
->>> BOOT SEQUENCE COMPLETE
->>> LAUNCHING APPLICATION…
-
-
-# Edit this file to customize splash terminal output.
-# You can add ANSI-like text, pseudo logs, or ASCII art.
-# The splash UI will stream these lines while startup checks are running.
-# Themes:
-# - [BOOT] Theme: CYAN_TERMINAL   (classic)
-# - [BOOT] Theme: CINEMATIC_CRT   (glitch/crt/film look)
+boot_sequence()
+print("await_operator_input() -> STANDBY")

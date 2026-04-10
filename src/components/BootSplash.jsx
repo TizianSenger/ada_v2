@@ -20,6 +20,23 @@ const READY_LABELS = [
     ['uiReady', 'UI Sync'],
 ];
 
+const splitTemplateSections = (sourceLines) => {
+    const lines = Array.isArray(sourceLines) ? sourceLines : [];
+    const firstBlank = lines.findIndex((line) => String(line || '').trim() === '');
+
+    if (firstBlank > 0) {
+        return {
+            asciiLines: lines.slice(0, firstBlank),
+            bodyLines: lines.slice(firstBlank + 1),
+        };
+    }
+
+    return {
+        asciiLines: DEFAULT_TEMPLATE.slice(0, 4),
+        bodyLines: lines,
+    };
+};
+
 const parseThemeFromLines = (sourceLines) => {
     const themeLine = sourceLines.find((line) => line.toLowerCase().startsWith('[boot] theme:'));
     if (!themeLine) return 'classic';
@@ -46,10 +63,12 @@ const safePlay = (path, volume = 0.22) => {
 
 function BootSplash({ ready, bootState, lines }) {
     const [templateLines, setTemplateLines] = useState(DEFAULT_TEMPLATE);
+    const [asciiHeaderLines, setAsciiHeaderLines] = useState([]);
     const [revealedCount, setRevealedCount] = useState(0);
     const [cursorVisible, setCursorVisible] = useState(true);
     const [glitchPulse, setGlitchPulse] = useState(false);
     const completionSoundPlayedRef = useRef(false);
+    const consoleRef = useRef(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -81,12 +100,46 @@ function BootSplash({ ready, bootState, lines }) {
         };
     }, []);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        fetch('/boot/ascii-header.txt')
+            .then((response) => {
+                if (!response.ok) {
+                    throw new Error('ascii_header_not_found');
+                }
+                return response.text();
+            })
+            .then((text) => {
+                if (cancelled) return;
+                const parsed = text
+                    .split(/\r?\n/)
+                    .map((line) => line.replace(/\t/g, '    '))
+                    .filter((line, idx, arr) => !(idx === arr.length - 1 && line === ''));
+                setAsciiHeaderLines(parsed);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setAsciiHeaderLines([]);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const { asciiLines, bodyLines } = useMemo(
+        () => splitTemplateSections(templateLines),
+        [templateLines]
+    );
+
     const fullLogLines = useMemo(() => {
         const signalLine = ready
             ? '[BOOT] All systems loaded.'
             : '[BOOT] Waiting for all mandatory systems...';
-        return [...templateLines, ...lines, signalLine];
-    }, [templateLines, lines, ready]);
+        return [...bodyLines, ...lines, signalLine];
+    }, [bodyLines, lines, ready]);
 
     const splashTheme = useMemo(() => parseThemeFromLines(templateLines), [templateLines]);
     const isCinematic = splashTheme === 'cinematic';
@@ -143,6 +196,13 @@ function BootSplash({ ready, bootState, lines }) {
     }, [bootState]);
 
     const visibleLines = fullLogLines.slice(0, Math.max(1, revealedCount));
+    const activeAsciiLines = asciiHeaderLines.length > 0 ? asciiHeaderLines : asciiLines;
+
+    useEffect(() => {
+        const node = consoleRef.current;
+        if (!node) return;
+        node.scrollTop = node.scrollHeight;
+    }, [visibleLines.length, cursorVisible]);
 
     return (
         <div className={`boot-overlay fixed inset-0 z-[10000] flex items-center justify-center p-4 ${isCinematic ? 'boot-overlay-cinematic' : 'boot-overlay-classic'}`}>
@@ -163,10 +223,20 @@ function BootSplash({ ready, bootState, lines }) {
                     )}
                     <div className="boot-scanline pointer-events-none absolute inset-0" />
                     <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-0">
-                        <pre className={`boot-console m-0 px-4 py-4 text-[12px] leading-5 md:text-[13px] md:leading-6 overflow-auto max-h-[58vh] md:max-h-[64vh] ${isCinematic ? 'boot-console-cinematic' : ''}`}>
-                            {visibleLines.join('\n')}
-                            {cursorVisible ? '\n> _' : '\n> '}
-                        </pre>
+                        <div className="flex flex-col max-h-[58vh] md:max-h-[64vh]">
+                            <pre className={`boot-console boot-ascii-header m-0 px-4 py-3 text-[12px] leading-5 md:text-[13px] md:leading-6 ${isCinematic ? 'boot-console-cinematic' : ''}`}>
+                                {activeAsciiLines.join('\n')}
+                            </pre>
+                            <div className={`border-t ${isCinematic ? 'border-rose-900/55' : 'border-cyan-800/60'}`} />
+                            <div className={`boot-ascii-fade ${isCinematic ? 'boot-ascii-fade-cinematic' : ''}`} />
+                            <pre
+                                ref={consoleRef}
+                                className={`boot-console boot-console-scroll scrollbar-hide m-0 px-4 py-3 text-[12px] leading-5 md:text-[13px] md:leading-6 overflow-y-auto flex-1 ${isCinematic ? 'boot-console-cinematic' : ''}`}
+                            >
+                                {visibleLines.join('\n')}
+                                {cursorVisible ? '\n> _' : '\n> '}
+                            </pre>
+                        </div>
 
                         <div className={`border-t md:border-t-0 md:border-l px-4 py-4 ${isCinematic ? 'border-rose-900/55 bg-rose-950/15' : 'border-cyan-800/60 bg-cyan-950/10'}`}>
                             <div className={`text-[11px] tracking-[0.2em] mb-3 ${isCinematic ? 'text-rose-200/80' : 'text-cyan-300/80'}`}>SYSTEM MATRIX</div>
