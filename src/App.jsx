@@ -7,7 +7,7 @@ import CadWindow from './components/CadWindow';
 import BrowserWindow from './components/BrowserWindow';
 import ChatModule from './components/ChatModule';
 import ToolsModule from './components/ToolsModule';
-import { Mic, MicOff, Settings, X, Minus, Power, Video, VideoOff, Layout, Hand, Printer, Clock, Gauge, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Mic, MicOff, Settings, X, Power, Video, VideoOff, Layout, Hand, Printer, Clock, Gauge, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 // MemoryPrompt removed - memory is now actively saved to project
 import ConfirmationPopup from './components/ConfirmationPopup';
@@ -120,6 +120,12 @@ function App() {
     const [currentProject, setCurrentProject] = useState('default');
     const [aiDisplayName, setAiDisplayName] = useState(() => localStorage.getItem('ai_display_name_active') || 'Jarvis');
     const [showBootSplash, setShowBootSplash] = useState(true);
+    const [backupPinConfigured, setBackupPinConfigured] = useState(false);
+    const [powerOffPinRequired, setPowerOffPinRequired] = useState(true);
+    const [powerOffPinModalOpen, setPowerOffPinModalOpen] = useState(false);
+    const [powerOffPin, setPowerOffPin] = useState('');
+    const [powerOffPinBusy, setPowerOffPinBusy] = useState(false);
+    const [powerOffPinMessage, setPowerOffPinMessage] = useState('');
     const [powerOffCountdownActive, setPowerOffCountdownActive] = useState(false);
     const [powerOffCountdownSeconds, setPowerOffCountdownSeconds] = useState(5);
     const [powerOffBusy, setPowerOffBusy] = useState(false);
@@ -242,6 +248,7 @@ function App() {
     const showBootSplashRef = useRef(true);
     const lastProjectUpdateRef = useRef({ name: null, at: 0 });
     const aiDisplayNameInitializedRef = useRef(false);
+    const powerOffPinModalOpenRef = useRef(false);
 
     const pushBootEvent = (line) => {
         const msg = String(line || '').trim();
@@ -311,6 +318,10 @@ function App() {
     useEffect(() => {
         showBootSplashRef.current = showBootSplash;
     }, [showBootSplash]);
+
+    useEffect(() => {
+        powerOffPinModalOpenRef.current = powerOffPinModalOpen;
+    }, [powerOffPinModalOpen]);
 
     // Live Clock Update
     useEffect(() => {
@@ -733,6 +744,12 @@ function App() {
             if (typeof settings.show_lock_button !== 'undefined') {
                 setShowLockButton(Boolean(settings.show_lock_button));
             }
+            if (typeof settings.backup_pin_configured !== 'undefined') {
+                setBackupPinConfigured(Boolean(settings.backup_pin_configured));
+            }
+            if (typeof settings.power_off_pin_required !== 'undefined') {
+                setPowerOffPinRequired(Boolean(settings.power_off_pin_required));
+            }
             if (typeof settings.whatsapp_monitor_enabled !== 'undefined') {
                 setWhatsappMonitorEnabled(Boolean(settings.whatsapp_monitor_enabled));
             }
@@ -935,6 +952,27 @@ function App() {
             if (!isDuplicate && !showBootSplashRef.current) {
                 addMessage('System', `Switched to project: ${data.project}`);
             }
+        });
+
+        socket.on('backup_pin_result', (data) => {
+            if (!powerOffPinModalOpenRef.current) {
+                return;
+            }
+
+            const ok = Boolean(data?.ok);
+            const msg = String(data?.message || '').trim();
+
+            setPowerOffPinBusy(false);
+
+            if (!ok) {
+                setPowerOffPinMessage(msg || 'Invalid PIN.');
+                return;
+            }
+
+            setPowerOffPinModalOpen(false);
+            setPowerOffPin('');
+            setPowerOffPinMessage('');
+            beginPowerOffCountdownAfterPin();
         });
 
         socket.on('left_panel_view', (data) => {
@@ -1229,6 +1267,7 @@ function App() {
             socket.off('error');
             socket.off('left_panel_view');
             socket.off('whatsapp_tool_request');
+            socket.off('backup_pin_result');
 
             if (stockViewTimerRef.current) {
                 clearTimeout(stockViewTimerRef.current);
@@ -1797,32 +1836,52 @@ function App() {
         }
     };
 
-    const handleMinimize = () => ipcRenderer.send('window-minimize');
-    const handleMaximize = () => ipcRenderer.send('window-maximize');
+    const startPowerOffCountdown = () => {
+        if (powerOffBusy || powerOffPinBusy || powerOffPinModalOpen) return;
 
-    // Close Application - memory is now actively saved to project, no prompt needed
-    const handleCloseRequest = () => {
-        // Emit shutdown signal to backend for graceful shutdown
-        // Use volatile emit with timeout fallback to ensure window closes even if server is unresponsive
-        const closeWindow = () => ipcRenderer.send('window-close');
-
-        if (socket.connected) {
-            console.log('[APP] Sending shutdown signal to backend...');
-            socket.emit('shutdown', {}, (ack) => {
-                // This callback may not be called if server uses os._exit
-                console.log('[APP] Shutdown acknowledged');
-                closeWindow();
-            });
-            // Fallback: close after 500ms if ack doesn't come back
-            setTimeout(closeWindow, 500);
-        } else {
-            // Socket not connected, just close
-            closeWindow();
+        if (!powerOffPinRequired) {
+            beginPowerOffCountdownAfterPin();
+            return;
         }
+
+        if (!backupPinConfigured) {
+            setPowerOffMessage('No backup PIN configured. Configure a 4-digit PIN in Settings > Security.');
+            addMessage('System', 'Power Off blocked: configure a 4-digit backup PIN in Settings > Security first.');
+            return;
+        }
+
+        setPowerOffPin('');
+        setPowerOffPinMessage('');
+        setPowerOffPinModalOpen(true);
     };
 
-    const startPowerOffCountdown = () => {
-        if (powerOffBusy) return;
+    const cancelPowerOffPinModal = () => {
+        if (powerOffPinBusy) return;
+        setPowerOffPinModalOpen(false);
+        setPowerOffPin('');
+        setPowerOffPinMessage('');
+    };
+
+    const submitPowerOffPin = () => {
+        if (powerOffPinBusy) return;
+
+        const normalizedPin = String(powerOffPin || '').replace(/\D/g, '').slice(0, 4);
+        if (!/^\d{4}$/.test(normalizedPin)) {
+            setPowerOffPinMessage('Please enter a valid 4-digit PIN.');
+            return;
+        }
+
+        if (!socket.connected) {
+            setPowerOffPinMessage('Backend is not connected. Cannot verify PIN right now.');
+            return;
+        }
+
+        setPowerOffPinBusy(true);
+        setPowerOffPinMessage('Verifying PIN...');
+        socket.emit('verify_backup_pin', { pin: normalizedPin });
+    };
+
+    const beginPowerOffCountdownAfterPin = () => {
         setPowerOffMessage('');
         setPowerOffCountdownSeconds(5);
         setPowerOffCountdownActive(true);
@@ -2179,6 +2238,52 @@ function App() {
                 />
             )}
 
+            {powerOffPinModalOpen && (
+                <div className="fixed inset-0 z-[121] bg-black/88 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-sm rounded-xl border border-red-700/50 bg-black/95 shadow-[0_0_45px_rgba(220,38,38,0.24)] overflow-hidden">
+                        <div className="px-4 py-3 border-b border-red-900/60 bg-gradient-to-r from-red-950/60 via-black/50 to-black/50">
+                            <h3 className="text-red-200 text-sm uppercase tracking-[0.15em]">Confirm Power Off</h3>
+                            <p className="mt-1 text-[10px] text-red-300/80 uppercase tracking-[0.1em]">Enter 4-digit backup PIN</p>
+                        </div>
+                        <div className="p-4">
+                            <input
+                                type="password"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                maxLength={4}
+                                value={powerOffPin}
+                                onChange={(e) => setPowerOffPin(String(e.target.value || '').replace(/\D/g, '').slice(0, 4))}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        submitPowerOffPin();
+                                    }
+                                }}
+                                placeholder="••••"
+                                className="w-full bg-gray-900 border border-red-800/70 rounded p-2 text-sm tracking-[0.25em] text-red-100 text-center focus:border-red-400 outline-none"
+                            />
+                            {powerOffPinMessage && <p className="mt-2 text-[10px] text-red-200/85">{powerOffPinMessage}</p>}
+                            <div className="mt-4 flex justify-end gap-2">
+                                <button
+                                    onClick={cancelPowerOffPinModal}
+                                    disabled={powerOffPinBusy}
+                                    className="text-[10px] uppercase tracking-wider px-3 py-1.5 rounded border border-cyan-900/50 bg-black/50 text-cyan-200 hover:border-cyan-600/70 disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={submitPowerOffPin}
+                                    disabled={powerOffPinBusy}
+                                    className="text-[10px] uppercase tracking-wider px-3 py-1.5 rounded bg-red-700/85 hover:bg-red-600 text-white disabled:opacity-50"
+                                >
+                                    {powerOffPinBusy ? 'Verifying...' : 'Verify PIN'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {powerOffCountdownActive && (
                 <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="w-full max-w-md rounded-xl border border-red-700/50 bg-black/95 shadow-[0_0_55px_rgba(220,38,38,0.25)] overflow-hidden">
@@ -2288,20 +2393,16 @@ function App() {
                     </div>
                     <button
                         onClick={startPowerOffCountdown}
-                        disabled={powerOffBusy || powerOffCountdownActive}
-                        className="p-1 hover:bg-red-900/50 rounded text-red-500 transition-colors disabled:opacity-50"
+                        disabled={powerOffBusy || powerOffCountdownActive || powerOffPinModalOpen}
+                        className="relative p-2 hover:bg-red-900/50 rounded text-red-500 transition-colors disabled:opacity-50"
                         title="Power Off Application"
                     >
-                        <Power size={18} />
-                    </button>
-                    <button onClick={handleMinimize} className="p-1 hover:bg-cyan-900/50 rounded text-cyan-500 transition-colors">
-                        <Minus size={18} />
-                    </button>
-                    <button onClick={handleMaximize} className="p-1 hover:bg-cyan-900/50 rounded text-cyan-500 transition-colors">
-                        <div className="w-[14px] h-[14px] border-2 border-current rounded-[2px]" />
-                    </button>
-                    <button onClick={handleCloseRequest} className="p-1 hover:bg-red-900/50 rounded text-red-500 transition-colors">
-                        <X size={18} />
+                        <Power size={22} />
+                        {powerOffPinRequired && (
+                            <span className="absolute -top-1 -right-1 text-[8px] leading-none px-1 py-0.5 rounded bg-red-700/90 text-white border border-red-300/30">
+                                PIN
+                            </span>
+                        )}
                     </button>
                 </div>
             </div>

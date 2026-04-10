@@ -376,6 +376,7 @@ const SettingsWindow = ({
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
     const [showLockButton, setShowLockButton] = useState(true);
+    const [powerOffPinRequired, setPowerOffPinRequired] = useState(true);
     const [whatsappMonitorEnabled, setWhatsappMonitorEnabled] = useState(false);
     const [whatsappNotifyEnabled, setWhatsappNotifyEnabled] = useState(true);
     const [whatsappMessage, setWhatsappMessage] = useState('');
@@ -480,6 +481,9 @@ const SettingsWindow = ({
                 }
                 if (typeof settings.show_lock_button !== 'undefined') {
                     setShowLockButton(Boolean(settings.show_lock_button));
+                }
+                if (typeof settings.power_off_pin_required !== 'undefined') {
+                    setPowerOffPinRequired(Boolean(settings.power_off_pin_required));
                 }
                 if (typeof settings.whatsapp_monitor_enabled !== 'undefined') {
                     setWhatsappMonitorEnabled(Boolean(settings.whatsapp_monitor_enabled));
@@ -698,6 +702,12 @@ const SettingsWindow = ({
         const newVal = !showLockButton;
         setShowLockButton(newVal);
         socket.emit('update_settings', { show_lock_button: newVal });
+    };
+
+    const togglePowerOffPinRequired = () => {
+        const newVal = !powerOffPinRequired;
+        setPowerOffPinRequired(newVal);
+        socket.emit('update_settings', { power_off_pin_required: newVal });
     };
 
     const toggleWhatsappMonitor = () => {
@@ -1481,6 +1491,13 @@ const SettingsWindow = ({
                         label="Show Lock Button (Bottom Toolbar)"
                         enabled={showLockButton}
                         onToggle={toggleShowLockButton}
+                    />
+                </div>
+                <div className="mt-2">
+                    <ToggleRow
+                        label="Require PIN For Power Off"
+                        enabled={powerOffPinRequired}
+                        onToggle={togglePowerOffPinRequired}
                     />
                 </div>
                 <div className="mt-3 bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">

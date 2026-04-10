@@ -153,6 +153,7 @@ DEFAULT_SETTINGS = {
     },
     "camera_flipped": False, # Invert cursor horizontal direction
     "show_lock_button": True,
+    "power_off_pin_required": True,
     "whatsapp_monitor_enabled": False,
     "whatsapp_notify_enabled": True,
     "whatsapp_show_detail_view": True,
@@ -1864,6 +1865,10 @@ async def update_settings(sid, data):
     if "show_lock_button" in data:
         SETTINGS["show_lock_button"] = bool(data.get("show_lock_button", True))
         print(f"[SERVER] Show lock button set to: {SETTINGS['show_lock_button']}")
+
+    if "power_off_pin_required" in data:
+        SETTINGS["power_off_pin_required"] = bool(data.get("power_off_pin_required", True))
+        print(f"[SERVER] Power-off PIN requirement set to: {SETTINGS['power_off_pin_required']}")
 
     if "whatsapp_monitor_enabled" in data:
         SETTINGS["whatsapp_monitor_enabled"] = bool(data.get("whatsapp_monitor_enabled", False))
