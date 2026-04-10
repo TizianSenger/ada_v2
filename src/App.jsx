@@ -48,7 +48,7 @@ function App() {
     const [showLockButton, setShowLockButton] = useState(true);
     const [whatsappMonitorEnabled, setWhatsappMonitorEnabled] = useState(false);
     const [whatsappNotifyEnabled, setWhatsappNotifyEnabled] = useState(true);
-    const [toolPermissions, setToolPermissions] = useState({});
+    const [toolEnabled, setToolEnabled] = useState({});
 
 
     const [isConnected, setIsConnected] = useState(true); // Power state DEFAULT ON
@@ -181,7 +181,9 @@ function App() {
     const stockViewTimerRef = useRef(null);
     const stockViewActiveRef = useRef(false);
     const leftPanelViewRef = useRef(null);
+    const smartHomeToolsEnabledRef = useRef(true);
     const printerToolsEnabledRef = useRef(true);
+    const whatsappToolsEnabledRef = useRef(true);
     const whatsappMonitorEnabledRef = useRef(false);
     const whatsappUnreadRef = useRef(0);
     const whatsappDataRef = useRef({
@@ -378,11 +380,32 @@ function App() {
         socket.emit('check_quotas');
     };
 
-    const isToolEnabled = (toolName) => toolPermissions?.[toolName] !== false;
+    const isToolEnabled = (toolName) => toolEnabled?.[toolName] !== false;
+    const isWhatsAppToolsEnabled =
+        isToolEnabled('get_whatsapp_unread') ||
+        isToolEnabled('show_whatsapp_detail_view');
+    const isSmartHomeToolsEnabled =
+        isToolEnabled('list_smart_devices') ||
+        isToolEnabled('control_light');
     const isPrinterToolsEnabled =
         isToolEnabled('discover_printers') ||
         isToolEnabled('print_stl') ||
         isToolEnabled('get_print_status');
+
+    useEffect(() => {
+        whatsappToolsEnabledRef.current = isWhatsAppToolsEnabled;
+        if (!isWhatsAppToolsEnabled && leftPanelViewRef.current?.type === 'whatsapp') {
+            setLeftPanelView({ type: 'clear', title: 'Detail View' });
+        }
+    }, [isWhatsAppToolsEnabled]);
+
+    useEffect(() => {
+        smartHomeToolsEnabledRef.current = isSmartHomeToolsEnabled;
+        if (!isSmartHomeToolsEnabled) {
+            setShowKasaWindow(false);
+            setKasaDevices([]);
+        }
+    }, [isSmartHomeToolsEnabled]);
 
     useEffect(() => {
         printerToolsEnabledRef.current = isPrinterToolsEnabled;
@@ -401,7 +424,9 @@ function App() {
             hasAutoConnectedRef.current = true;
 
             // Trigger Kasa and Printer Discovery
-            socket.emit('discover_home');
+            if (isSmartHomeToolsEnabled) {
+                socket.emit('discover_home');
+            }
             if (isPrinterToolsEnabled) {
                 socket.emit('discover_printers');
             }
@@ -421,7 +446,7 @@ function App() {
                 });
             }, 500);
         }
-    }, [isConnected, isAuthenticated, socketConnected, micDevices, selectedMicId, isPrinterToolsEnabled]);
+    }, [isConnected, isAuthenticated, socketConnected, micDevices, selectedMicId, isSmartHomeToolsEnabled, isPrinterToolsEnabled]);
 
     useEffect(() => {
         // Socket IO Setup
@@ -493,8 +518,11 @@ function App() {
             if (typeof settings.whatsapp_notify_enabled !== 'undefined') {
                 setWhatsappNotifyEnabled(Boolean(settings.whatsapp_notify_enabled));
             }
-            if (settings && settings.tool_permissions && typeof settings.tool_permissions === 'object') {
-                setToolPermissions(settings.tool_permissions);
+            if (settings && settings.tool_enabled && typeof settings.tool_enabled === 'object') {
+                setToolEnabled(settings.tool_enabled);
+            } else if (settings && settings.tool_permissions && typeof settings.tool_permissions === 'object') {
+                // Backward compatibility fallback if backend has not migrated yet.
+                setToolEnabled(settings.tool_permissions);
             }
         });
         socket.on('error', (data) => {
@@ -635,11 +663,18 @@ function App() {
 
         // Kasa Devices
         socket.on('kasa_devices', (devices) => {
+            if (!smartHomeToolsEnabledRef.current) {
+                setKasaDevices([]);
+                return;
+            }
             console.log("Kasa Devices:", devices);
             setKasaDevices(devices);
         });
 
         socket.on('kasa_update', (data) => {
+            if (!smartHomeToolsEnabledRef.current) {
+                return;
+            }
             setKasaDevices(prev => prev.map(d => {
                 if (d.ip === data.ip) {
                     // Update only fields that are not null/undefined
@@ -704,6 +739,28 @@ function App() {
         });
 
         socket.on('whatsapp_tool_request', async (data) => {
+            if (!whatsappToolsEnabledRef.current) {
+                const requestId = String(data?.request_id || '').trim();
+                if (requestId) {
+                    socket.emit('whatsapp_tool_response', {
+                        request_id: requestId,
+                        ok: true,
+                        opened_detail: false,
+                        reason: 'whatsapp_tools_disabled',
+                        monitor_enabled: false,
+                        detail_enabled: false,
+                        whatsapp: {
+                            status: 'disabled',
+                            unreadCount: 0,
+                            chats: [],
+                            title: 'WhatsApp',
+                            timestamp: Date.now(),
+                        },
+                    });
+                }
+                return;
+            }
+
             const payload = data || {};
             const requestId = String(payload.request_id || '').trim();
             if (!requestId) {
@@ -939,14 +996,14 @@ function App() {
 
     useEffect(() => {
         ipcRenderer.send('whatsapp-config', {
-            enabled: whatsappMonitorEnabled,
+            enabled: whatsappMonitorEnabled && isWhatsAppToolsEnabled,
             notifyEnabled: whatsappNotifyEnabled,
         });
 
-        if (!whatsappMonitorEnabled && leftPanelViewRef.current?.type === 'whatsapp') {
+        if ((!whatsappMonitorEnabled || !isWhatsAppToolsEnabled) && leftPanelViewRef.current?.type === 'whatsapp') {
             setLeftPanelView({ type: 'clear', title: 'Detail View' });
         }
-    }, [whatsappMonitorEnabled, whatsappNotifyEnabled]);
+    }, [whatsappMonitorEnabled, whatsappNotifyEnabled, isWhatsAppToolsEnabled]);
 
     useEffect(() => {
         const handleWhatsappStatus = (_event, data) => {
@@ -961,6 +1018,10 @@ function App() {
             const unread = Number.isFinite(Number(payload.unreadCount)) ? Number(payload.unreadCount) : 0;
             whatsappUnreadRef.current = unread;
             whatsappDataRef.current = payload;
+
+            if (!isWhatsAppToolsEnabled) {
+                return;
+            }
 
             if (!whatsappMonitorEnabled) {
                 return;
@@ -989,7 +1050,7 @@ function App() {
         return () => {
             ipcRenderer.removeListener('whatsapp-status', handleWhatsappStatus);
         };
-    }, [whatsappMonitorEnabled]);
+    }, [whatsappMonitorEnabled, isWhatsAppToolsEnabled]);
 
     // Initial check in case we are already connected (fix race condition)
     useEffect(() => {
@@ -1749,6 +1810,10 @@ function App() {
     const showCenterMatrixOverlay = showSystemMatrixOverlay || showMemoryMatrixOverlay;
 
     const toggleKasaWindow = () => {
+        if (!isSmartHomeToolsEnabled) {
+            setShowKasaWindow(false);
+            return;
+        }
         if (!showKasaWindow) {
             // Maybe trigger discover instantly?
             if (kasaDevices.length === 0) socket.emit('discover_home');
@@ -1852,7 +1917,7 @@ function App() {
                         </div>
                     )}
                     {/* Connected Smart Devices Count */}
-                    {kasaDevices.length > 0 && (
+                    {isSmartHomeToolsEnabled && kasaDevices.length > 0 && (
                         <div className="flex items-center gap-1.5 text-[10px] text-yellow-400 border border-yellow-500/30 bg-yellow-500/10 px-2 py-0.5 rounded ml-2">
                             <span>💡</span>
                             <span>{kasaDevices.length} Device{kasaDevices.length !== 1 ? 's' : ''}</span>
@@ -1907,6 +1972,7 @@ function App() {
                             selectedRoomFilter={selectedMemoryRoomFilter}
                             onRoomSelect={setSelectedMemoryRoomFilter}
                             onClearRoomFilter={() => setSelectedMemoryRoomFilter(null)}
+                            toolPermissions={toolEnabled}
                         />
                     </div>
                 </div>
@@ -2123,6 +2189,7 @@ function App() {
                         onToggleHand={() => setIsHandTrackingEnabled(!isHandTrackingEnabled)}
                         onToggleKasa={toggleKasaWindow}
                         showKasaWindow={showKasaWindow}
+                        showKasaControl={isSmartHomeToolsEnabled}
                         onTogglePrinter={togglePrinterWindow}
                         showPrinterWindow={showPrinterWindow}
                         showPrinterControl={isPrinterToolsEnabled}
@@ -2226,7 +2293,7 @@ function App() {
                 )}
 
                 {/* Kasa Window */}
-                {showKasaWindow && (
+                {isSmartHomeToolsEnabled && showKasaWindow && (
                     <KasaWindow
                         socket={socket}
                         position={elementPositions.kasa}

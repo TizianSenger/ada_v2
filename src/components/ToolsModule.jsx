@@ -15,6 +15,7 @@ const ToolsModule = ({
     onToggleHand,
     onToggleKasa,
     showKasaWindow,
+    showKasaControl = true,
     onTogglePrinter,
     showPrinterWindow,
     showPrinterControl = true,
@@ -105,15 +106,17 @@ const ToolsModule = ({
                 </button>
 
                 {/* Kasa Light Control */}
-                <button
-                    onClick={onToggleKasa}
-                    className={`p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ${showKasaWindow
-                        ? 'border-yellow-300 bg-yellow-300/10 text-yellow-300 hover:bg-yellow-300/20 shadow-[0_0_15px_rgba(253,224,71,0.3)]'
-                        : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
-                        } `}
-                >
-                    <Lightbulb size={24} />
-                </button>
+                {showKasaControl && (
+                    <button
+                        onClick={onToggleKasa}
+                        className={`p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ${showKasaWindow
+                            ? 'border-yellow-300 bg-yellow-300/10 text-yellow-300 hover:bg-yellow-300/20 shadow-[0_0_15px_rgba(253,224,71,0.3)]'
+                            : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
+                            } `}
+                    >
+                        <Lightbulb size={24} />
+                    </button>
+                )}
 
                 {/* 3D Printer Control */}
                 {showPrinterControl && (

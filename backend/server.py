@@ -111,7 +111,7 @@ DEFAULT_SETTINGS = {
         "route_plan": True,
         "get_whatsapp_unread": True,
         "show_whatsapp_detail_view": True,
-        "clear_detail_view": True,
+        "clear_detail_view": False,
         "system_check": True,
         "search_memory": True,
         "save_to_memory": True,
@@ -130,6 +130,7 @@ DEFAULT_SETTINGS = {
         "update_gmail_labels": True,
         "send_gmail_message": True,
     },
+    "tool_enabled": {},
     "printers": [], # List of {host, port, name, type}
     "kasa_devices": [], # List of {ip, alias, model}
     "default_weather_location": "Berlin,DE",
@@ -146,6 +147,15 @@ DEFAULT_SETTINGS = {
 }
 
 SETTINGS = DEFAULT_SETTINGS.copy()
+SETTINGS["tool_enabled"] = dict(DEFAULT_SETTINGS["tool_permissions"])
+
+
+def _enforce_tool_invariants():
+    # Closing detail view must always be possible for UX recovery.
+    SETTINGS.setdefault("tool_enabled", {})
+    SETTINGS.setdefault("tool_permissions", {})
+    SETTINGS["tool_enabled"]["clear_detail_view"] = True
+    SETTINGS["tool_permissions"]["clear_detail_view"] = False
 
 
 def _settings_for_client():
@@ -301,8 +311,27 @@ def load_settings():
                 for k, v in loaded.items():
                     if k == "tool_permissions" and isinstance(v, dict):
                          SETTINGS["tool_permissions"].update(v)
+                    elif k == "tool_enabled" and isinstance(v, dict):
+                         SETTINGS["tool_enabled"].update(v)
                     else:
                         SETTINGS[k] = v
+
+            # Migration: older installs stored only tool_permissions as enable/disable.
+            loaded_had_tool_enabled = isinstance(loaded.get("tool_enabled"), dict)
+            if not loaded_had_tool_enabled:
+                SETTINGS["tool_enabled"] = dict(SETTINGS.get("tool_permissions", {}))
+                SETTINGS["tool_permissions"] = dict(DEFAULT_SETTINGS["tool_permissions"])
+            elif not isinstance(SETTINGS.get("tool_enabled"), dict) or not SETTINGS.get("tool_enabled"):
+                SETTINGS["tool_enabled"] = dict(SETTINGS.get("tool_permissions", {}))
+
+            # Ensure both maps contain all known tools.
+            for tool_name, default_enabled in DEFAULT_SETTINGS["tool_permissions"].items():
+                if tool_name not in SETTINGS["tool_enabled"]:
+                    SETTINGS["tool_enabled"][tool_name] = bool(default_enabled)
+                if tool_name not in SETTINGS["tool_permissions"]:
+                    SETTINGS["tool_permissions"][tool_name] = True
+
+            _enforce_tool_invariants()
 
             stored_key = str(SETTINGS.get("gemini_api_key", "") or "").strip()
             if stored_key:
@@ -336,7 +365,7 @@ kasa_agent = KasaAgent(
     tapo_username=SETTINGS.get("tapo_username", ""),
     tapo_password=SETTINGS.get("tapo_password", ""),
 )
-# tool_permissions is now SETTINGS["tool_permissions"]
+# tool_permissions (ask) and tool_enabled (run/block) are now in SETTINGS
 
 @app.on_event("startup")
 async def startup_event():
@@ -567,8 +596,9 @@ async def start_audio(sid, data=None):
         )
         print("AudioLoop initialized successfully.")
 
-        # Apply current permissions
-        audio_loop.update_permissions(SETTINGS["tool_permissions"])
+        # Apply current tool configuration
+        audio_loop.update_tool_enabled(SETTINGS.get("tool_enabled", {}))
+        audio_loop.update_tool_confirmation(SETTINGS.get("tool_permissions", {}))
         if hasattr(audio_loop, "set_long_term_memory_enabled"):
             audio_loop.set_long_term_memory_enabled(SETTINGS.get("long_term_memory_enabled", True))
         if hasattr(audio_loop, "set_memory_locked"):
@@ -1663,10 +1693,21 @@ async def update_settings(sid, data):
     print(f"Updating settings: {data}")
     
     # Handle specific keys if needed
+    if "tool_enabled" in data:
+        SETTINGS["tool_enabled"].update(data["tool_enabled"])
+        if audio_loop and hasattr(audio_loop, "update_tool_enabled"):
+            audio_loop.update_tool_enabled(SETTINGS["tool_enabled"])
+
     if "tool_permissions" in data:
         SETTINGS["tool_permissions"].update(data["tool_permissions"])
-        if audio_loop:
-            audio_loop.update_permissions(SETTINGS["tool_permissions"])
+        if audio_loop and hasattr(audio_loop, "update_tool_confirmation"):
+            audio_loop.update_tool_confirmation(SETTINGS["tool_permissions"])
+
+    _enforce_tool_invariants()
+    if audio_loop and hasattr(audio_loop, "update_tool_enabled"):
+        audio_loop.update_tool_enabled(SETTINGS["tool_enabled"])
+    if audio_loop and hasattr(audio_loop, "update_tool_confirmation"):
+        audio_loop.update_tool_confirmation(SETTINGS["tool_permissions"])
             
     if "face_auth_enabled" in data:
         requested = bool(data["face_auth_enabled"])
@@ -1776,7 +1817,10 @@ async def update_tool_permissions(sid, data):
     save_settings()
     
     if audio_loop:
-        audio_loop.update_permissions(SETTINGS["tool_permissions"])
+        if hasattr(audio_loop, "update_tool_confirmation"):
+            audio_loop.update_tool_confirmation(SETTINGS["tool_permissions"])
+        else:
+            audio_loop.update_permissions(SETTINGS["tool_permissions"])
     # Broadcast update to all
     await sio.emit('tool_permissions', SETTINGS["tool_permissions"])
 

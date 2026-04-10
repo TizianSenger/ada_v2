@@ -274,7 +274,8 @@ class AudioLoop:
         self.send_text_task = None
         self.stop_event = asyncio.Event()
         
-        self.permissions = {} # Default Empty (Will treat unset as True)
+        self.tool_enabled = {} # True=tool can run, False=tool blocked
+        self.tool_confirmation = {} # True=ask confirmation, False=auto-allow
         self._pending_confirmations = {}
 
         # Video buffering state
@@ -356,9 +357,35 @@ class AudioLoop:
         self._last_input_transcription = ""
         self._last_output_transcription = ""
 
+    def update_tool_enabled(self, enabled_map):
+        print(f"[ADA DEBUG] [CONFIG] Updating tool enabled map: {enabled_map}")
+        self.tool_enabled.update(enabled_map or {})
+
+    def update_tool_confirmation(self, confirmation_map):
+        print(f"[ADA DEBUG] [CONFIG] Updating tool confirmation map: {confirmation_map}")
+        self.tool_confirmation.update(confirmation_map or {})
+
     def update_permissions(self, new_perms):
-        print(f"[ADA DEBUG] [CONFIG] Updating tool permissions: {new_perms}")
-        self.permissions.update(new_perms)
+        # Backward compatibility: old call-site maps permissions -> confirmation behavior.
+        self.update_tool_confirmation(new_perms)
+
+    def _refresh_tool_config_from_settings(self):
+        """Pull latest tool config from settings.json to avoid stale runtime state."""
+        data = _read_settings_json()
+        if not isinstance(data, dict):
+            return
+
+        enabled_map = data.get("tool_enabled")
+        confirmation_map = data.get("tool_permissions")
+
+        if isinstance(enabled_map, dict):
+            self.tool_enabled.update(enabled_map)
+        elif isinstance(confirmation_map, dict) and not self.tool_enabled:
+            # Backward compatibility with older single-map settings.
+            self.tool_enabled.update(confirmation_map)
+
+        if isinstance(confirmation_map, dict):
+            self.tool_confirmation.update(confirmation_map)
 
     def _ensure_memory_agent(self):
         if not self.long_term_memory_enabled:
@@ -783,28 +810,71 @@ class AudioLoop:
     async def run_system_check(self, include_network_checks=True):
         started_ts = time.time()
         checks = []
+        smart_home_checks_enabled = any([
+            self.tool_enabled.get("list_smart_devices", True),
+            self.tool_enabled.get("control_light", True),
+        ])
+        whatsapp_checks_enabled = any([
+            self.tool_enabled.get("get_whatsapp_unread", True),
+            self.tool_enabled.get("show_whatsapp_detail_view", True),
+        ])
+        weather_checks_enabled = any([
+            self.tool_enabled.get("get_weather", True),
+            self.tool_enabled.get("get_weather_forecast", True),
+            self.tool_enabled.get("get_weather_full_report", True),
+        ])
+        stock_checks_enabled = any([
+            self.tool_enabled.get("search_stock_symbol", True),
+            self.tool_enabled.get("get_stock_quote", True),
+            self.tool_enabled.get("get_stock_news", True),
+        ])
+        route_checks_enabled = self.tool_enabled.get("route_plan", True)
+        calendar_checks_enabled = any([
+            self.tool_enabled.get("connect_google_workspace", True),
+            self.tool_enabled.get("list_calendar_events", True),
+            self.tool_enabled.get("get_calendar_view", True),
+            self.tool_enabled.get("create_calendar_event", True),
+            self.tool_enabled.get("update_calendar_event", True),
+            self.tool_enabled.get("delete_calendar_event", True),
+            self.tool_enabled.get("list_calendar_invitations", True),
+            self.tool_enabled.get("respond_calendar_invitation", True),
+        ])
+        gmail_checks_enabled = any([
+            self.tool_enabled.get("connect_google_workspace", True),
+            self.tool_enabled.get("list_gmail_messages", True),
+            self.tool_enabled.get("get_gmail_message_detail", True),
+            self.tool_enabled.get("list_gmail_labels", True),
+            self.tool_enabled.get("update_gmail_labels", True),
+            self.tool_enabled.get("send_gmail_message", True),
+        ])
         printer_checks_enabled = any([
-            self.permissions.get("discover_printers", True),
-            self.permissions.get("print_stl", True),
-            self.permissions.get("get_print_status", True),
+            self.tool_enabled.get("discover_printers", True),
+            self.tool_enabled.get("print_stl", True),
+            self.tool_enabled.get("get_print_status", True),
         ])
 
         planned_checks = [
             "Model Session",
             "Project Storage",
             "Long-term Memory",
-            "Smart Home Cache",
         ]
+        if smart_home_checks_enabled:
+            planned_checks.append("Smart Home Cache")
         if include_network_checks:
-            planned_checks.extend([
-                "Smart Home Discovery",
-                "WhatsApp Monitor",
-                "Weather API",
-                "Stock Market API",
-                "Route Service",
-                "Google Calendar",
-                "Gmail",
-            ])
+            if whatsapp_checks_enabled:
+                planned_checks.append("WhatsApp Monitor")
+            if weather_checks_enabled:
+                planned_checks.append("Weather API")
+            if stock_checks_enabled:
+                planned_checks.append("Stock Market API")
+            if route_checks_enabled:
+                planned_checks.append("Route Service")
+            if calendar_checks_enabled:
+                planned_checks.append("Google Calendar")
+            if gmail_checks_enabled:
+                planned_checks.append("Gmail")
+            if smart_home_checks_enabled:
+                planned_checks.append("Smart Home Discovery")
             if printer_checks_enabled:
                 planned_checks.append("Printer Discovery")
         else:
@@ -958,40 +1028,42 @@ class AudioLoop:
         except Exception as e:
             add_check("Long-term Memory", "fail", f"Memory check failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
-        # Core: smart home cache status
-        t0 = time.time()
-        try:
-            cache_devices = self.kasa_agent.get_devices_list()
-            if cache_devices:
-                add_check(
-                    "Smart Home Cache",
-                    "pass",
-                    f"{len(cache_devices)} cached smart devices.",
-                    {"count": len(cache_devices)},
-                    (time.time() - t0) * 1000,
-                )
-            else:
-                add_check("Smart Home Cache", "warn", "No cached smart devices.", duration_ms=(time.time() - t0) * 1000)
-        except Exception as e:
-            add_check("Smart Home Cache", "fail", f"Smart device cache error: {e}", duration_ms=(time.time() - t0) * 1000)
-
-        if include_network_checks:
-            # Smart-home discovery probe
+        if smart_home_checks_enabled:
+            # Core: smart home cache status
             t0 = time.time()
             try:
-                devices = await self.kasa_agent.discover_devices()
-                if devices:
+                cache_devices = self.kasa_agent.get_devices_list()
+                if cache_devices:
                     add_check(
-                        "Smart Home Discovery",
+                        "Smart Home Cache",
                         "pass",
-                        f"Discovery found {len(devices)} device(s).",
-                        {"count": len(devices)},
+                        f"{len(cache_devices)} cached smart devices.",
+                        {"count": len(cache_devices)},
                         (time.time() - t0) * 1000,
                     )
                 else:
-                    add_check("Smart Home Discovery", "warn", "Discovery found no devices.", duration_ms=(time.time() - t0) * 1000)
+                    add_check("Smart Home Cache", "warn", "No cached smart devices.", duration_ms=(time.time() - t0) * 1000)
             except Exception as e:
-                add_check("Smart Home Discovery", "fail", f"Discovery failed: {e}", duration_ms=(time.time() - t0) * 1000)
+                add_check("Smart Home Cache", "fail", f"Smart device cache error: {e}", duration_ms=(time.time() - t0) * 1000)
+
+        if include_network_checks:
+            if smart_home_checks_enabled:
+                # Smart-home discovery probe
+                t0 = time.time()
+                try:
+                    devices = await self.kasa_agent.discover_devices()
+                    if devices:
+                        add_check(
+                            "Smart Home Discovery",
+                            "pass",
+                            f"Discovery found {len(devices)} device(s).",
+                            {"count": len(devices)},
+                            (time.time() - t0) * 1000,
+                        )
+                    else:
+                        add_check("Smart Home Discovery", "warn", "Discovery found no devices.", duration_ms=(time.time() - t0) * 1000)
+                except Exception as e:
+                    add_check("Smart Home Discovery", "fail", f"Discovery failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
             if printer_checks_enabled:
                 # Printer discovery/status probe
@@ -1011,156 +1083,162 @@ class AudioLoop:
                 except Exception as e:
                     add_check("Printer Discovery", "fail", f"Printer check failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
-            # WhatsApp monitor probe (via frontend snapshot bridge)
-            t0 = time.time()
-            try:
-                snapshot_response = await self.fetch_whatsapp_snapshot(open_detail=False, max_chats=6)
-                if not snapshot_response:
-                    add_check(
-                        "WhatsApp Monitor",
-                        "warn",
-                        "WhatsApp status not available (no frontend bridge response).",
-                        duration_ms=(time.time() - t0) * 1000,
-                    )
-                elif not snapshot_response.get("ok", False):
-                    reason = str(snapshot_response.get("reason", "unknown") or "unknown")
-                    add_check(
-                        "WhatsApp Monitor",
-                        "warn",
-                        f"WhatsApp status unavailable: {reason}.",
-                        {"reason": reason},
-                        (time.time() - t0) * 1000,
-                    )
-                else:
-                    whatsapp = snapshot_response.get("whatsapp", {}) or {}
-                    status = str(whatsapp.get("status", "unknown") or "unknown")
-                    unread = int(whatsapp.get("unreadCount", 0) or 0)
-                    chats = whatsapp.get("chats", []) or []
-                    unread_chats = [
-                        str(c.get("name", "Unknown") or "Unknown")
-                        for c in chats
-                        if int(c.get("unread", 0) or 0) > 0
-                    ][:5]
-
-                    details = {
-                        "status": status,
-                        "unread_count": unread,
-                        "chat_count": len(chats),
-                        "monitor_enabled": bool(snapshot_response.get("monitor_enabled", False)),
-                        "detail_enabled": bool(snapshot_response.get("detail_enabled", False)),
-                        "unread_chats": unread_chats,
-                    }
-
-                    if status == "connected":
-                        add_check(
-                            "WhatsApp Monitor",
-                            "pass",
-                            f"WhatsApp connected ({unread} unread message(s)).",
-                            details,
-                            (time.time() - t0) * 1000,
-                        )
-                    elif status == "login_required":
+            if whatsapp_checks_enabled:
+                # WhatsApp monitor probe (via frontend snapshot bridge)
+                t0 = time.time()
+                try:
+                    snapshot_response = await self.fetch_whatsapp_snapshot(open_detail=False, max_chats=6)
+                    if not snapshot_response:
                         add_check(
                             "WhatsApp Monitor",
                             "warn",
-                            "WhatsApp login required (QR not confirmed).",
-                            details,
-                            (time.time() - t0) * 1000,
+                            "WhatsApp status not available (no frontend bridge response).",
+                            duration_ms=(time.time() - t0) * 1000,
                         )
-                    elif status == "disabled":
+                    elif not snapshot_response.get("ok", False):
+                        reason = str(snapshot_response.get("reason", "unknown") or "unknown")
                         add_check(
                             "WhatsApp Monitor",
                             "warn",
-                            "WhatsApp monitor is disabled in settings.",
-                            details,
+                            f"WhatsApp status unavailable: {reason}.",
+                            {"reason": reason},
                             (time.time() - t0) * 1000,
                         )
                     else:
-                        add_check(
-                            "WhatsApp Monitor",
-                            "warn",
-                            f"WhatsApp status: {status}.",
-                            details,
-                            (time.time() - t0) * 1000,
-                        )
-            except Exception as e:
-                add_check("WhatsApp Monitor", "fail", f"WhatsApp check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+                        whatsapp = snapshot_response.get("whatsapp", {}) or {}
+                        status = str(whatsapp.get("status", "unknown") or "unknown")
+                        unread = int(whatsapp.get("unreadCount", 0) or 0)
+                        chats = whatsapp.get("chats", []) or []
+                        unread_chats = [
+                            str(c.get("name", "Unknown") or "Unknown")
+                            for c in chats
+                            if int(c.get("unread", 0) or 0) > 0
+                        ][:5]
 
-            # Weather API probe
-            t0 = time.time()
-            try:
-                weather = await asyncio.to_thread(self.weather_agent.get_current_weather, "", "metric", "de")
-                add_check(
-                    "Weather API",
-                    "pass",
-                    f"Weather API ok for {weather.get('location', 'default')}.",
-                    {"location": weather.get("location")},
-                    (time.time() - t0) * 1000,
-                )
-            except Exception as e:
-                add_check("Weather API", "fail", f"Weather check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+                        details = {
+                            "status": status,
+                            "unread_count": unread,
+                            "chat_count": len(chats),
+                            "monitor_enabled": bool(snapshot_response.get("monitor_enabled", False)),
+                            "detail_enabled": bool(snapshot_response.get("detail_enabled", False)),
+                            "unread_chats": unread_chats,
+                        }
 
-            # Stock market API probe (Finnhub/Massive)
-            t0 = time.time()
-            try:
-                quote = await asyncio.to_thread(self.finnhub_agent.get_stock_quote, "AAPL")
-                add_check(
-                    "Stock Market API",
-                    "pass",
-                    f"Stock API ok for {quote.get('symbol', 'AAPL')}.",
-                    {
-                        "symbol": quote.get("symbol"),
-                        "price": (quote.get("quote") or {}).get("current"),
-                    },
-                    (time.time() - t0) * 1000,
-                )
-            except Exception as e:
-                msg = str(e)
-                status = "warn" if "FINNHUB_API_KEY fehlt" in msg else "fail"
-                add_check("Stock Market API", status, f"Stock API check failed: {msg}", duration_ms=(time.time() - t0) * 1000)
+                        if status == "connected":
+                            add_check(
+                                "WhatsApp Monitor",
+                                "pass",
+                                f"WhatsApp connected ({unread} unread message(s)).",
+                                details,
+                                (time.time() - t0) * 1000,
+                            )
+                        elif status == "login_required":
+                            add_check(
+                                "WhatsApp Monitor",
+                                "warn",
+                                "WhatsApp login required (QR not confirmed).",
+                                details,
+                                (time.time() - t0) * 1000,
+                            )
+                        elif status == "disabled":
+                            add_check(
+                                "WhatsApp Monitor",
+                                "warn",
+                                "WhatsApp monitor is disabled in settings.",
+                                details,
+                                (time.time() - t0) * 1000,
+                            )
+                        else:
+                            add_check(
+                                "WhatsApp Monitor",
+                                "warn",
+                                f"WhatsApp status: {status}.",
+                                details,
+                                (time.time() - t0) * 1000,
+                            )
+                except Exception as e:
+                    add_check("WhatsApp Monitor", "fail", f"WhatsApp check failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
-            # Route service probe
-            t0 = time.time()
-            try:
-                origin = resolve_default_route_origin()
-                route = await asyncio.to_thread(self.route_agent.plan_route, origin, "Berlin,DE", "driving", False)
-                add_check(
-                    "Route Service",
-                    "pass",
-                    f"Route API ok ({route.get('distance_km', 'n/a')} km test route).",
-                    {"origin": origin, "destination": "Berlin,DE"},
-                    (time.time() - t0) * 1000,
-                )
-            except Exception as e:
-                add_check("Route Service", "fail", f"Route check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+            if weather_checks_enabled:
+                # Weather API probe
+                t0 = time.time()
+                try:
+                    weather = await asyncio.to_thread(self.weather_agent.get_current_weather, "", "metric", "de")
+                    add_check(
+                        "Weather API",
+                        "pass",
+                        f"Weather API ok for {weather.get('location', 'default')}.",
+                        {"location": weather.get("location")},
+                        (time.time() - t0) * 1000,
+                    )
+                except Exception as e:
+                    add_check("Weather API", "fail", f"Weather check failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
-            # Google Calendar probe
-            t0 = time.time()
-            try:
-                events = await asyncio.to_thread(self.google_calendar.list_upcoming_events, 1)
-                add_check(
-                    "Google Calendar",
-                    "pass",
-                    f"Calendar API reachable ({len(events)} event sample).",
-                    {"sample_count": len(events)},
-                    (time.time() - t0) * 1000,
-                )
-            except Exception as e:
-                add_check("Google Calendar", "warn", f"Calendar unavailable: {e}", duration_ms=(time.time() - t0) * 1000)
+            if stock_checks_enabled:
+                # Stock market API probe (Finnhub/Massive)
+                t0 = time.time()
+                try:
+                    quote = await asyncio.to_thread(self.finnhub_agent.get_stock_quote, "AAPL")
+                    add_check(
+                        "Stock Market API",
+                        "pass",
+                        f"Stock API ok for {quote.get('symbol', 'AAPL')}.",
+                        {
+                            "symbol": quote.get("symbol"),
+                            "price": (quote.get("quote") or {}).get("current"),
+                        },
+                        (time.time() - t0) * 1000,
+                    )
+                except Exception as e:
+                    msg = str(e)
+                    status = "warn" if "FINNHUB_API_KEY fehlt" in msg else "fail"
+                    add_check("Stock Market API", status, f"Stock API check failed: {msg}", duration_ms=(time.time() - t0) * 1000)
 
-            # Gmail probe
-            t0 = time.time()
-            try:
-                msgs = await asyncio.to_thread(self.google_gmail.list_messages, 1, None)
-                add_check(
-                    "Gmail",
-                    "pass",
-                    f"Gmail API reachable ({len(msgs)} message sample).",
-                    {"sample_count": len(msgs)},
-                    (time.time() - t0) * 1000,
-                )
-            except Exception as e:
-                add_check("Gmail", "warn", f"Gmail unavailable: {e}", duration_ms=(time.time() - t0) * 1000)
+            if route_checks_enabled:
+                # Route service probe
+                t0 = time.time()
+                try:
+                    origin = resolve_default_route_origin()
+                    route = await asyncio.to_thread(self.route_agent.plan_route, origin, "Berlin,DE", "driving", False)
+                    add_check(
+                        "Route Service",
+                        "pass",
+                        f"Route API ok ({route.get('distance_km', 'n/a')} km test route).",
+                        {"origin": origin, "destination": "Berlin,DE"},
+                        (time.time() - t0) * 1000,
+                    )
+                except Exception as e:
+                    add_check("Route Service", "fail", f"Route check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            if calendar_checks_enabled:
+                # Google Calendar probe
+                t0 = time.time()
+                try:
+                    events = await asyncio.to_thread(self.google_calendar.list_upcoming_events, 1)
+                    add_check(
+                        "Google Calendar",
+                        "pass",
+                        f"Calendar API reachable ({len(events)} event sample).",
+                        {"sample_count": len(events)},
+                        (time.time() - t0) * 1000,
+                    )
+                except Exception as e:
+                    add_check("Google Calendar", "warn", f"Calendar unavailable: {e}", duration_ms=(time.time() - t0) * 1000)
+
+            if gmail_checks_enabled:
+                # Gmail probe
+                t0 = time.time()
+                try:
+                    msgs = await asyncio.to_thread(self.google_gmail.list_messages, 1, None)
+                    add_check(
+                        "Gmail",
+                        "pass",
+                        f"Gmail API reachable ({len(msgs)} message sample).",
+                        {"sample_count": len(msgs)},
+                        (time.time() - t0) * 1000,
+                    )
+                except Exception as e:
+                    add_check("Gmail", "warn", f"Gmail unavailable: {e}", duration_ms=(time.time() - t0) * 1000)
         else:
             add_check("Network Checks", "warn", "Network checks skipped by request.", duration_ms=0)
 
@@ -1563,16 +1641,27 @@ class AudioLoop:
                         for fc in response.tool_call.function_calls:
                             if fc.name in SUPPORTED_TOOL_NAMES:
                                 prompt = fc.args.get("prompt", "") # Prompt is not present for all tools
+                                self._refresh_tool_config_from_settings()
                                 
-                                # Check Permissions (Default to True if not set)
-                                confirmation_required = self.permissions.get(fc.name, True)
-                                
-                                if not confirmation_required:
-                                    print(f"[ADA DEBUG] [TOOL] Permission check: '{fc.name}' -> AUTO-ALLOW")
-                                    # Skip confirmation block and jump to execution
-                                    pass
-                                else:
-                                    # Confirmation Logic
+                                # Permission model: True = enabled, False = disabled.
+                                tool_enabled = self.tool_enabled.get(fc.name, True)
+                                if fc.name == "clear_detail_view":
+                                    tool_enabled = True
+
+                                if not tool_enabled:
+                                    print(f"[ADA DEBUG] [TOOL] Permission check: '{fc.name}' -> DISABLED")
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": f"Tool '{fc.name}' is disabled in settings."}
+                                    )
+                                    function_responses.append(function_response)
+                                    continue
+                                # Ask-for-permission logic is independent from enabled/disabled.
+                                ask_confirmation = self.tool_confirmation.get(fc.name, True)
+                                if fc.name == "clear_detail_view":
+                                    ask_confirmation = False
+                                if ask_confirmation:
                                     if not self.on_tool_confirmation:
                                         print(
                                             f"[ADA DEBUG] [WARN] Confirmation required for '{fc.name}' "

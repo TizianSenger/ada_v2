@@ -69,7 +69,52 @@ const EmptyState = () => (
     </div>
 );
 
-const ModeHeader = ({ activeMode }) => {
+const ModeHeader = ({ activeMode, toolPermissions = {} }) => {
+    const isToolEnabled = (toolName) => toolPermissions?.[toolName] !== false;
+    const isModeVisible = (id) => {
+        if (id === 'weather') {
+            return isToolEnabled('get_weather') || isToolEnabled('get_weather_forecast') || isToolEnabled('get_weather_full_report');
+        }
+        if (id === 'calendar') {
+            return (
+                isToolEnabled('connect_google_workspace') ||
+                isToolEnabled('list_calendar_events') ||
+                isToolEnabled('get_calendar_view') ||
+                isToolEnabled('create_calendar_event') ||
+                isToolEnabled('update_calendar_event') ||
+                isToolEnabled('delete_calendar_event') ||
+                isToolEnabled('list_calendar_invitations') ||
+                isToolEnabled('respond_calendar_invitation')
+            );
+        }
+        if (id === 'mail') {
+            return (
+                isToolEnabled('connect_google_workspace') ||
+                isToolEnabled('list_gmail_messages') ||
+                isToolEnabled('get_gmail_message_detail') ||
+                isToolEnabled('list_gmail_labels') ||
+                isToolEnabled('update_gmail_labels') ||
+                isToolEnabled('send_gmail_message')
+            );
+        }
+        if (id === 'whatsapp') {
+            return isToolEnabled('get_whatsapp_unread') || isToolEnabled('show_whatsapp_detail_view');
+        }
+        if (id === 'route') {
+            return isToolEnabled('route_plan');
+        }
+        if (id === 'stock') {
+            return isToolEnabled('search_stock_symbol') || isToolEnabled('get_stock_quote') || isToolEnabled('get_stock_news');
+        }
+        if (id === 'system') {
+            return true;
+        }
+        if (id === 'memory') {
+            return true;
+        }
+        return true;
+    };
+
     const modes = [
         { id: 'weather', label: 'Wetter', Icon: CloudSun },
         { id: 'calendar', label: 'Kalender', Icon: CalendarDays },
@@ -79,7 +124,7 @@ const ModeHeader = ({ activeMode }) => {
         { id: 'stock', label: 'Stock', Icon: LineChart },
         { id: 'system', label: 'System', Icon: ShieldCheck },
         { id: 'memory', label: 'Memory', Icon: Brain },
-    ];
+    ].filter((mode) => isModeVisible(mode.id));
 
     return (
         <div className="h-10 border-b border-cyan-900/40 bg-black/25 px-3 flex items-center justify-center gap-2">
@@ -1370,6 +1415,7 @@ const LeftToolView = ({
     selectedRoomFilter = null,
     onRoomSelect = null,
     onClearRoomFilter = null,
+    toolPermissions = {},
 }) => {
     const [fadeKey, setFadeKey] = useState(0);
     const isEmpty = !payload?.type || payload.type === 'clear';
@@ -1439,7 +1485,7 @@ const LeftToolView = ({
                     <span className="text-cyan-500/70 text-[10px] uppercase tracking-wider">Live</span>
                 </div>
             </div>
-            <ModeHeader activeMode={mode} />
+            <ModeHeader activeMode={mode} toolPermissions={toolPermissions} />
             <div key={fadeKey} className="flex-1 animate-fade-in overflow-hidden">
                 {content}
             </div>

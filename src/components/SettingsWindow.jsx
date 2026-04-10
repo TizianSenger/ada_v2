@@ -30,7 +30,6 @@ const TOOLS = [
     { id: 'route_plan', label: 'Route Plan (Free)' },
     { id: 'get_whatsapp_unread', label: 'Get WhatsApp Unread' },
     { id: 'show_whatsapp_detail_view', label: 'Show WhatsApp Detail View' },
-    { id: 'clear_detail_view', label: 'Clear Detail View' },
     { id: 'system_check', label: 'System Check' },
     { id: 'search_memory', label: 'Search Memory' },
     { id: 'save_to_memory', label: 'Save to Memory' },
@@ -57,7 +56,6 @@ const TOOL_GROUPS = {
         'generate_cad',
         'iterate_cad',
         'run_web_agent',
-        'clear_detail_view',
     ],
     Files: [
         'write_file',
@@ -114,6 +112,26 @@ const TOOL_GROUPS = {
 };
 
 const PRINTER_TOOL_IDS = ['discover_printers', 'print_stl', 'get_print_status'];
+const SMART_HOME_TOOL_IDS = ['list_smart_devices', 'control_light'];
+const WHATSAPP_TOOL_IDS = ['get_whatsapp_unread', 'show_whatsapp_detail_view'];
+const WEATHER_TOOL_IDS = ['get_weather', 'get_weather_forecast', 'get_weather_full_report'];
+const STOCK_TOOL_IDS = ['search_stock_symbol', 'get_stock_quote', 'get_stock_news'];
+const ROUTE_TOOL_IDS = ['route_plan'];
+const CALENDAR_MAIL_TOOL_IDS = [
+    'connect_google_workspace',
+    'list_calendar_events',
+    'get_calendar_view',
+    'create_calendar_event',
+    'update_calendar_event',
+    'delete_calendar_event',
+    'list_calendar_invitations',
+    'respond_calendar_invitation',
+    'list_gmail_messages',
+    'get_gmail_message_detail',
+    'list_gmail_labels',
+    'update_gmail_labels',
+    'send_gmail_message',
+];
 
 const TAB_BUTTON = 'px-3 py-1.5 text-xs rounded-md border transition-colors';
 const VOICE_OPTIONS = ['Kore', 'Orus', 'Fenrir', 'Charon', 'Puck', 'Aoede'];
@@ -153,6 +171,7 @@ const SettingsWindow = ({
     const HEADER_HEIGHT = 52;
     const WINDOW_MARGIN = 16;
 
+    const [toolEnabled, setToolEnabled] = useState({});
     const [permissions, setPermissions] = useState({});
     const [faceAuthEnabled, setFaceAuthEnabled] = useState(false);
     const [showLockButton, setShowLockButton] = useState(true);
@@ -233,6 +252,12 @@ const SettingsWindow = ({
         const handleSettings = (settings) => {
             console.log("Received settings:", settings);
             if (settings) {
+                if (settings.tool_enabled) {
+                    setToolEnabled(settings.tool_enabled);
+                } else if (settings.tool_permissions) {
+                    // Backward-compatibility fallback for older backend state.
+                    setToolEnabled(settings.tool_permissions);
+                }
                 if (settings.tool_permissions) setPermissions(settings.tool_permissions);
                 if (typeof settings.face_auth_enabled !== 'undefined') {
                     setFaceAuthEnabled(settings.face_auth_enabled);
@@ -387,21 +412,31 @@ const SettingsWindow = ({
         const currentVal = permissions[toolId] !== false; // Default True
         const nextVal = !currentVal;
 
-        // Update local mostly for responsiveness, but socket roundtrip handles truth
-        // setPermissions(prev => ({ ...prev, [toolId]: nextVal }));
+        // Optimistic update for immediate UI feedback
+        setPermissions((prev) => ({ ...prev, [toolId]: nextVal }));
 
         // Send update
         socket.emit('update_settings', { tool_permissions: { [toolId]: nextVal } });
     };
 
-    const areToolsEnabled = (ids) => ids.some((id) => permissions[id] !== false);
+    const toggleToolEnabled = (toolId) => {
+        const currentVal = toolEnabled[toolId] !== false; // Default True
+        const nextVal = !currentVal;
+        // Optimistic update for immediate UI feedback
+        setToolEnabled((prev) => ({ ...prev, [toolId]: nextVal }));
+        socket.emit('update_settings', { tool_enabled: { [toolId]: nextVal } });
+    };
+
+    const areToolsEnabled = (ids) => ids.every((id) => toolEnabled[id] !== false);
 
     const setToolGroupEnabled = (ids, enabled) => {
         const payload = ids.reduce((acc, id) => {
             acc[id] = enabled;
             return acc;
         }, {});
-        socket.emit('update_settings', { tool_permissions: payload });
+        // Optimistic group update for immediate UI feedback
+        setToolEnabled((prev) => ({ ...prev, ...payload }));
+        socket.emit('update_settings', { tool_enabled: payload });
     };
 
     const toggleFaceAuth = () => {
@@ -1137,15 +1172,57 @@ const SettingsWindow = ({
     const renderToolsTab = () => {
         const selectedGroup = groupedTools.find((g) => g.group === activeToolGroup) || groupedTools[0];
         const printerToolsEnabled = areToolsEnabled(PRINTER_TOOL_IDS);
+        const smartHomeToolsEnabled = areToolsEnabled(SMART_HOME_TOOL_IDS);
+        const whatsappToolsEnabled = areToolsEnabled(WHATSAPP_TOOL_IDS);
+        const weatherToolsEnabled = areToolsEnabled(WEATHER_TOOL_IDS);
+        const stockToolsEnabled = areToolsEnabled(STOCK_TOOL_IDS);
+        const routeToolsEnabled = areToolsEnabled(ROUTE_TOOL_IDS);
+        const calendarMailToolsEnabled = areToolsEnabled(CALENDAR_MAIL_TOOL_IDS);
+        const systemCheckEnabled = toolEnabled.system_check !== false;
 
         return (
             <div className="space-y-4">
                 <div className="border border-cyan-900/40 rounded-lg p-3 bg-black/25">
                     <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Quick Toggles</div>
                     <ToggleRow
+                        label="Smart Home Tools (all)"
+                        enabled={smartHomeToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(SMART_HOME_TOOL_IDS, !smartHomeToolsEnabled)}
+                    />
+                    <ToggleRow
                         label="Printer Tools (all)"
                         enabled={printerToolsEnabled}
                         onToggle={() => setToolGroupEnabled(PRINTER_TOOL_IDS, !printerToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="WhatsApp Tools (all)"
+                        enabled={whatsappToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(WHATSAPP_TOOL_IDS, !whatsappToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="Weather Tools (all)"
+                        enabled={weatherToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(WEATHER_TOOL_IDS, !weatherToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="Stock Tools (all)"
+                        enabled={stockToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(STOCK_TOOL_IDS, !stockToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="Route Tools"
+                        enabled={routeToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(ROUTE_TOOL_IDS, !routeToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="Calendar + Mail Tools (all)"
+                        enabled={calendarMailToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(CALENDAR_MAIL_TOOL_IDS, !calendarMailToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="System Check"
+                        enabled={systemCheckEnabled}
+                        onToggle={() => toggleToolEnabled('system_check')}
                     />
                 </div>
 
@@ -1165,11 +1242,25 @@ const SettingsWindow = ({
                 </div>
 
                 <div className="space-y-2 max-h-[420px] overflow-y-auto scrollbar-hide pr-1">
+                    <div className="text-[11px] text-cyan-300/90 uppercase tracking-wider">Tool Activation</div>
+                    {(selectedGroup?.items || []).map((tool) => {
+                        const isActive = toolEnabled[tool.id] !== false;
+                        return (
+                            <ToggleRow
+                                key={`enabled-${tool.id}`}
+                                label={tool.label}
+                                enabled={isActive}
+                                onToggle={() => toggleToolEnabled(tool.id)}
+                            />
+                        );
+                    })}
+
+                    <div className="pt-3 text-[11px] text-cyan-300/90 uppercase tracking-wider">Ask For Permission</div>
                     {(selectedGroup?.items || []).map((tool) => {
                         const isRequired = permissions[tool.id] !== false;
                         return (
                             <ToggleRow
-                                key={tool.id}
+                                key={`perm-${tool.id}`}
                                 label={tool.label}
                                 enabled={isRequired}
                                 onToggle={() => togglePermission(tool.id)}
