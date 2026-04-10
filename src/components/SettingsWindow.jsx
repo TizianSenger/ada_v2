@@ -117,6 +117,17 @@ const WHATSAPP_TOOL_IDS = ['get_whatsapp_unread', 'show_whatsapp_detail_view'];
 const WEATHER_TOOL_IDS = ['get_weather', 'get_weather_forecast', 'get_weather_full_report'];
 const STOCK_TOOL_IDS = ['search_stock_symbol', 'get_stock_quote', 'get_stock_news'];
 const ROUTE_TOOL_IDS = ['route_plan'];
+const FILE_PROJECT_TOOL_IDS = [
+    'write_file',
+    'read_directory',
+    'read_file',
+    'create_project',
+    'switch_project',
+    'list_projects',
+    'create_directory',
+];
+const MEMORY_TOOL_IDS = ['search_memory', 'save_to_memory', 'memory_status', 'show_memory_quality_view'];
+const DATETIME_TOOL_IDS = ['get_current_datetime'];
 const CALENDAR_MAIL_TOOL_IDS = [
     'connect_google_workspace',
     'list_calendar_events',
@@ -1177,6 +1188,9 @@ const SettingsWindow = ({
         const weatherToolsEnabled = areToolsEnabled(WEATHER_TOOL_IDS);
         const stockToolsEnabled = areToolsEnabled(STOCK_TOOL_IDS);
         const routeToolsEnabled = areToolsEnabled(ROUTE_TOOL_IDS);
+        const fileProjectToolsEnabled = areToolsEnabled(FILE_PROJECT_TOOL_IDS);
+        const memoryToolsEnabled = areToolsEnabled(MEMORY_TOOL_IDS);
+        const dateTimeToolEnabled = areToolsEnabled(DATETIME_TOOL_IDS);
         const calendarMailToolsEnabled = areToolsEnabled(CALENDAR_MAIL_TOOL_IDS);
         const systemCheckEnabled = toolEnabled.system_check !== false;
 
@@ -1213,6 +1227,21 @@ const SettingsWindow = ({
                         label="Route Tools"
                         enabled={routeToolsEnabled}
                         onToggle={() => setToolGroupEnabled(ROUTE_TOOL_IDS, !routeToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="File + Project Tools (all)"
+                        enabled={fileProjectToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(FILE_PROJECT_TOOL_IDS, !fileProjectToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="Memory Tools (all)"
+                        enabled={memoryToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(MEMORY_TOOL_IDS, !memoryToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="DateTime Tool"
+                        enabled={dateTimeToolEnabled}
+                        onToggle={() => setToolGroupEnabled(DATETIME_TOOL_IDS, !dateTimeToolEnabled)}
                     />
                     <ToggleRow
                         label="Calendar + Mail Tools (all)"

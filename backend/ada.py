@@ -1649,6 +1649,35 @@ class AudioLoop:
                                     tool_enabled = True
 
                                 if not tool_enabled:
+                                    if fc.name == "memory_status" and self.tool_enabled.get("show_memory_quality_view", True):
+                                        try:
+                                            report = await self.get_memory_quality_report(sample_limit=1200)
+                                            self.emit_tool_view(
+                                                {
+                                                    "type": "memory_quality",
+                                                    "title": "Memory Quality Report",
+                                                    "report": report,
+                                                    "status": "completed",
+                                                }
+                                            )
+                                            result_str = (
+                                                "Tool 'memory_status' is disabled, "
+                                                "but I opened the memory quality report instead."
+                                            )
+                                        except Exception as e:
+                                            result_str = (
+                                                "Tool 'memory_status' is disabled and fallback memory quality report failed: "
+                                                f"{e}"
+                                            )
+
+                                        function_response = types.FunctionResponse(
+                                            id=fc.id,
+                                            name=fc.name,
+                                            response={"result": result_str}
+                                        )
+                                        function_responses.append(function_response)
+                                        continue
+
                                     print(f"[ADA DEBUG] [TOOL] Permission check: '{fc.name}' -> DISABLED")
                                     function_response = types.FunctionResponse(
                                         id=fc.id,
