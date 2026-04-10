@@ -61,7 +61,7 @@ const safePlay = (path, volume = 0.22) => {
     }
 };
 
-function BootSplash({ ready, bootState, lines }) {
+function BootSplash({ ready, bootState, lines, aiDisplayName = 'Jarvis' }) {
     const [templateLines, setTemplateLines] = useState(DEFAULT_TEMPLATE);
     const [asciiHeaderLines, setAsciiHeaderLines] = useState([]);
     const [revealedCount, setRevealedCount] = useState(0);
@@ -138,8 +138,17 @@ function BootSplash({ ready, bootState, lines }) {
         const signalLine = ready
             ? '[BOOT] All systems loaded.'
             : '[BOOT] Waiting for all mandatory systems...';
-        return [...bodyLines, ...lines, signalLine];
-    }, [bodyLines, lines, ready]);
+        const profileTag = String(aiDisplayName || 'Jarvis')
+            .replace(/[^a-z0-9]+/gi, '_')
+            .replace(/^_+|_+$/g, '')
+            .toUpperCase() || 'ADA';
+
+        const replacer = (line) => String(line || '')
+            .replace(/A\.D\.A/g, aiDisplayName)
+            .replace(/\bADA_V2\b/g, `${profileTag}_V2`);
+
+        return [...bodyLines, ...lines, signalLine].map(replacer);
+    }, [bodyLines, lines, ready, aiDisplayName]);
 
     const splashTheme = useMemo(() => parseThemeFromLines(templateLines), [templateLines]);
     const isCinematic = splashTheme === 'cinematic';
@@ -209,7 +218,7 @@ function BootSplash({ ready, bootState, lines }) {
             <div className={`boot-grid absolute inset-0 ${isCinematic ? 'boot-grid-cinematic' : ''}`} />
             <div className={`boot-shell relative w-full max-w-5xl rounded-2xl border overflow-hidden ${isCinematic ? 'boot-shell-cinematic border-rose-400/25 bg-black/75 shadow-[0_0_90px_rgba(244,63,94,0.2)]' : 'border-cyan-500/40 bg-black/70 backdrop-blur-xl shadow-[0_0_70px_rgba(6,182,212,0.18)]'} ${glitchPulse ? 'boot-glitch-pulse' : ''}`}>
                 <div className={`boot-header px-4 py-2 border-b flex items-center justify-between text-xs tracking-wider ${isCinematic ? 'border-rose-700/40 text-rose-100/85' : 'border-cyan-700/50 text-cyan-200/90'}`}>
-                    <span>A.D.A BOOT SEQUENCE</span>
+                    <span>{aiDisplayName} BOOT SEQUENCE</span>
                     <span>{progress}%</span>
                 </div>
 

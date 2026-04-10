@@ -353,6 +353,24 @@ function requestAppShutdown(reason = 'user_request') {
     }, 2000);
 }
 
+function requestAppRestart(reason = 'user_restart') {
+    if (isAppShuttingDown) {
+        return;
+    }
+
+    isAppShuttingDown = true;
+    console.log(`[APP] Restart requested (${reason}).`);
+
+    try {
+        stopWhatsappWatcher();
+    } catch (err) {
+        console.warn(`[APP] Failed to stop WhatsApp watcher during restart: ${err.message}`);
+    }
+
+    app.relaunch();
+    app.exit(0);
+}
+
 async function readWhatsappSnapshotForToolRequest(options = {}) {
     const showWindow = Boolean(options?.showWindow);
     const maxChatsRaw = Number(options?.maxChats);
@@ -521,6 +539,11 @@ app.whenReady().then(() => {
 
     ipcMain.handle('whatsapp-read-snapshot', async (_event, options) => {
         return readWhatsappSnapshotForToolRequest(options || {});
+    });
+
+    ipcMain.handle('app-restart', async () => {
+        requestAppRestart('settings_button');
+        return { ok: true };
     });
 
     checkBackendPort(8000).then((isTaken) => {

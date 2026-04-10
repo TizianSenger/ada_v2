@@ -137,6 +137,7 @@ DEFAULT_SETTINGS = {
     "tapo_username": "",
     "tapo_password": "",
     "voice_name": "Kore",
+    "ai_display_name": "Jarvis",
     "camera_flipped": False, # Invert cursor horizontal direction
     "show_lock_button": True,
     "whatsapp_monitor_enabled": False,
@@ -1877,6 +1878,13 @@ async def update_settings(sid, data):
         except Exception as e:
             print(f"[SERVER] Failed to set voice name: {e}")
             await sio.emit('error', {'msg': f'Failed to set voice: {str(e)}'}, room=sid)
+
+    if "ai_display_name" in data:
+        raw_name = str(data.get("ai_display_name", "") or "").strip()
+        safe_name = raw_name[:40] if raw_name else "Jarvis"
+        SETTINGS["ai_display_name"] = safe_name
+        print(f"[SERVER] AI display name set to: {safe_name}")
+        await sio.emit('status', {'msg': f'AI display name saved: {safe_name}. Restart required to apply in all UI labels.'}, room=sid)
 
     if "gemini_api_key" in data:
         new_key = str(data.get("gemini_api_key", "") or "").strip()

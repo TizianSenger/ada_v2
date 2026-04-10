@@ -242,6 +242,9 @@ const SettingsWindow = ({
     const [bootSplashTheme, setBootSplashTheme] = useState('CINEMATIC_CRT');
     const [bootSplashThemeBusy, setBootSplashThemeBusy] = useState(false);
     const [bootSplashThemeMessage, setBootSplashThemeMessage] = useState('');
+    const [aiDisplayName, setAiDisplayName] = useState('Jarvis');
+    const [aiDisplayNameMessage, setAiDisplayNameMessage] = useState('');
+    const [restartBusy, setRestartBusy] = useState(false);
 
     const dragRef = useRef({ active: false, offsetX: 0, offsetY: 0 });
     const faceSetupVideoRef = useRef(null);
@@ -316,6 +319,7 @@ const SettingsWindow = ({
                 setFinnhubApiKeyConfigured(Boolean(settings.finnhub_api_key_configured));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
                 setVoiceName(settings.voice_name || 'Kore');
+                setAiDisplayName(settings.ai_display_name || 'Jarvis');
                 setTapoUsername(settings.tapo_username || '');
                 setTapoPasswordConfigured(Boolean(settings.tapo_password_configured));
             }
@@ -758,13 +762,70 @@ const SettingsWindow = ({
         socket.emit('set_boot_splash_theme', { theme });
     };
 
+    const saveAiDisplayName = () => {
+        const trimmed = String(aiDisplayName || '').trim();
+        if (!trimmed) {
+            setAiDisplayNameMessage('Please enter a valid AI name.');
+            return;
+        }
+
+        const safeName = trimmed.slice(0, 40);
+        setAiDisplayName(safeName);
+        socket.emit('update_settings', { ai_display_name: safeName });
+        setAiDisplayNameMessage('AI name saved. Restart is required to apply it across the full UI.');
+    };
+
+    const restartApplication = async () => {
+        if (!ipcRenderer || typeof ipcRenderer.invoke !== 'function') {
+            setAiDisplayNameMessage('Restart is only available in the Electron desktop app.');
+            return;
+        }
+
+        try {
+            setRestartBusy(true);
+            setAiDisplayNameMessage('Restarting ADA (frontend + backend)...');
+            await ipcRenderer.invoke('app-restart');
+        } catch (err) {
+            setRestartBusy(false);
+            setAiDisplayNameMessage(`Restart failed: ${err?.message || String(err)}`);
+        }
+    };
+
+    const activeAiName = String(aiDisplayName || '').trim() || 'Jarvis';
+
     const refreshBootSplashTheme = () => {
         setBootSplashThemeMessage('Loading splash theme from template file...');
         socket.emit('get_boot_splash_theme');
     };
 
-    const renderSplashTab = () => (
+    const renderPersonaliseTab = () => (
         <div className="space-y-5">
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">AI Name</h3>
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                    <div className="text-[10px] text-cyan-500/70 mb-2">
+                        Changes all visible AI labels after restart.
+                    </div>
+                    <input
+                        type="text"
+                        value={aiDisplayName}
+                        maxLength={40}
+                        onChange={(e) => setAiDisplayName(e.target.value)}
+                        placeholder="AI display name (e.g. A.D.A)"
+                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                    />
+                    <div className="flex items-center justify-end mt-2">
+                        <button
+                            onClick={saveAiDisplayName}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                        >
+                            Save AI Name
+                        </button>
+                    </div>
+                    {aiDisplayNameMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{aiDisplayNameMessage}</p>}
+                </div>
+            </div>
+
             <div>
                 <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Boot Splash Theme</h3>
                 <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
@@ -1485,10 +1546,17 @@ const SettingsWindow = ({
                         Memory
                     </button>
                     <button
-                        onClick={() => setActiveTab('splash')}
-                        className={`${TAB_BUTTON} ${activeTab === 'splash' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                        onClick={() => setActiveTab('personalise')}
+                        className={`${TAB_BUTTON} ${activeTab === 'personalise' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
                     >
-                        Splash Screen
+                        Personalise
+                    </button>
+                    <button
+                        onClick={restartApplication}
+                        disabled={restartBusy}
+                        className="ml-auto text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                    >
+                        {restartBusy ? `Restarting ${activeAiName}...` : `Restart ${activeAiName}`}
                     </button>
                 </div>
 
@@ -1503,7 +1571,7 @@ const SettingsWindow = ({
                     {activeTab === 'smart-home' && renderSmartHomeTab()}
                     {activeTab === 'tools' && renderToolsTab()}
                     {activeTab === 'memory' && renderMemoryTab()}
-                    {activeTab === 'splash' && renderSplashTab()}
+                    {activeTab === 'personalise' && renderPersonaliseTab()}
                 </div>
             </div>
 

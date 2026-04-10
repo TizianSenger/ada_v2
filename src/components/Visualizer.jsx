@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 
-const Visualizer = ({ audioData, isListening, intensity = 0, width = 600, height = 400, showLogo = true }) => {
+const Visualizer = ({ audioData, isListening, intensity = 0, width = 600, height = 400, showLogo = true, aiDisplayName = 'Jarvis' }) => {
     const canvasRef = useRef(null);
 
     // Use a ref for audioData to avoid re-creating the animation loop on every frame
@@ -93,7 +93,7 @@ const Visualizer = ({ audioData, isListening, intensity = 0, width = 600, height
                         className="text-cyan-100 font-bold tracking-widest drop-shadow-[0_0_15px_rgba(34,211,238,0.8)]"
                         style={{ fontSize: Math.min(width, height) * 0.1 }}
                     >
-                        A.D.A
+                        {aiDisplayName}
                     </motion.div>
                 </div>
             )}

@@ -117,6 +117,19 @@ def resolve_default_route_origin():
         return "Berlin,DE"
 
 
+def resolve_ai_display_name():
+    env_name = str(os.getenv("ADA_DISPLAY_NAME", "") or "").strip()
+    if env_name:
+        return env_name[:40]
+
+    data = _read_settings_json()
+    settings_name = str(data.get("ai_display_name", "") or "").strip()
+    if settings_name:
+        return settings_name[:40]
+
+    return "Jarvis"
+
+
 def _read_settings_json():
     settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
     if not os.path.exists(settings_path):
@@ -155,14 +168,16 @@ def get_genai_client():
 tools = [{'google_search': {}}, {"function_declarations": function_declarations}]
 SUPPORTED_TOOL_NAMES = {decl["name"] for decl in function_declarations}
 
-def _build_live_config(voice_name: str):
+def _build_live_config(voice_name: str, ai_display_name: str | None = None):
     selected_voice = voice_name if voice_name in SUPPORTED_VOICE_NAMES else "Kore"
+    selected_name = str(ai_display_name or "").strip() or resolve_ai_display_name()
+    selected_name = selected_name[:40] or "Jarvis"
     return types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         # We switch these from [] to {} to enable them with default settings
         output_audio_transcription={},
         input_audio_transcription={},
-        system_instruction="Your name is Ada, you are a state-of-the-art AI assistant designed to help with a wide range of tasks. Your main goal is to satisfy the user's requests as efficiently and accurately as possible. "
+        system_instruction=f"Your name is {selected_name}, you are a state-of-the-art AI assistant designed to help with a wide range of tasks. Your main goal is to satisfy the user's requests as efficiently and accurately as possible. "
             "You should sound warm, friendly, witty, and human in conversation. "
             "Use light humor, charm, and natural phrasing when appropriate so the interaction feels personal and pleasant. "
             "Show empathy and emotional intelligence in tone while staying concise and useful. "
@@ -187,13 +202,13 @@ def _build_live_config(voice_name: str):
     )
 
 
-config = _build_live_config(resolve_voice_name())
+config = _build_live_config(resolve_voice_name(), resolve_ai_display_name())
 
 
 def update_voice_name(voice_name: str):
     global config
     name = str(voice_name or "").strip()
-    config = _build_live_config(name)
+    config = _build_live_config(name, resolve_ai_display_name())
 
 pya = pyaudio.PyAudio()
 

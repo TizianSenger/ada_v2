@@ -118,9 +118,10 @@ function App() {
     });
     const [showSettings, setShowSettings] = useState(false);
     const [currentProject, setCurrentProject] = useState('default');
+    const [aiDisplayName, setAiDisplayName] = useState(() => localStorage.getItem('ai_display_name_active') || 'Jarvis');
     const [showBootSplash, setShowBootSplash] = useState(true);
     const [bootEvents, setBootEvents] = useState([
-        '[BOOT] Initializing A.D.A runtime...',
+        '[BOOT] Initializing Jarvis runtime...',
         '[BOOT] Waiting for backend handshake...',
     ]);
     const [bootState, setBootState] = useState({
@@ -236,6 +237,7 @@ function App() {
     const bootCompleteHandledRef = useRef(false);
     const showBootSplashRef = useRef(true);
     const lastProjectUpdateRef = useRef({ name: null, at: 0 });
+    const aiDisplayNameInitializedRef = useRef(false);
 
     const pushBootEvent = (line) => {
         const msg = String(line || '').trim();
@@ -349,7 +351,7 @@ function App() {
             // Fresh chat start after boot to avoid startup noise (status/project init logs).
             setMessages([
                 {
-                    sender: 'ADA',
+                    sender: aiDisplayName,
                     text: 'All systems loaded, ready to start sir. With what can I assist you?',
                     time: new Date().toLocaleTimeString(),
                 }
@@ -357,7 +359,7 @@ function App() {
         }, waitMs);
 
         return () => clearTimeout(timeoutId);
-    }, [showBootSplash, bootReady]);
+    }, [showBootSplash, bootReady, aiDisplayName]);
 
     // Centering Logic (Startup & Resize)
     useEffect(() => {
@@ -658,6 +660,13 @@ function App() {
         socket.on('settings', (settings) => {
             console.log("[Settings] Received:", settings);
             markBootState('settingsLoaded', true, '[BOOT] Settings loaded.');
+
+            if (!aiDisplayNameInitializedRef.current) {
+                const startupName = String(settings?.ai_display_name || '').trim() || aiDisplayName;
+                setAiDisplayName(startupName);
+                localStorage.setItem('ai_display_name_active', startupName);
+                aiDisplayNameInitializedRef.current = true;
+            }
 
             const resolvedToolEnabled =
                 (settings && settings.tool_enabled && typeof settings.tool_enabled === 'object')
@@ -2088,6 +2097,7 @@ function App() {
                     ready={bootReady}
                     bootState={bootState}
                     lines={bootEvents}
+                    aiDisplayName={aiDisplayName}
                 />
             )}
 
@@ -2143,7 +2153,7 @@ function App() {
             <div className="z-50 relative flex items-center justify-between p-2 border-b border-cyan-500/20 bg-black/40 backdrop-blur-md select-none sticky top-0" style={{ WebkitAppRegion: 'drag' }}>
                 <div className="relative z-10 flex items-center gap-4 pl-2">
                     <h1 className="text-xl font-bold tracking-[0.2em] text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]">
-                        A.D.A
+                        {aiDisplayName}
                     </h1>
                     <div className="text-[10px] text-cyan-700 border border-cyan-900 px-1 rounded">
                         V2.0.0
@@ -2248,6 +2258,7 @@ function App() {
                                 width={elementSizes.visualizer.w}
                                 height={elementSizes.visualizer.h}
                                 showLogo={!showCenterMatrixOverlay}
+                                aiDisplayName={aiDisplayName}
                             />
                         )}
                         {showSystemMatrixOverlay && (
