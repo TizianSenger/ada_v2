@@ -120,6 +120,10 @@ function App() {
     const [currentProject, setCurrentProject] = useState('default');
     const [aiDisplayName, setAiDisplayName] = useState(() => localStorage.getItem('ai_display_name_active') || 'Jarvis');
     const [showBootSplash, setShowBootSplash] = useState(true);
+    const [powerOffCountdownActive, setPowerOffCountdownActive] = useState(false);
+    const [powerOffCountdownSeconds, setPowerOffCountdownSeconds] = useState(5);
+    const [powerOffBusy, setPowerOffBusy] = useState(false);
+    const [powerOffMessage, setPowerOffMessage] = useState('');
     const [bootEvents, setBootEvents] = useState([
         '[BOOT] Initializing Jarvis runtime...',
         '[BOOT] Waiting for backend handshake...',
@@ -360,6 +364,25 @@ function App() {
 
         return () => clearTimeout(timeoutId);
     }, [showBootSplash, bootReady, aiDisplayName]);
+
+    useEffect(() => {
+        if (!powerOffCountdownActive) {
+            return undefined;
+        }
+
+        const timer = window.setInterval(() => {
+            setPowerOffCountdownSeconds((prev) => {
+                if (prev <= 1) {
+                    window.clearInterval(timer);
+                    executePowerOff();
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+
+        return () => window.clearInterval(timer);
+    }, [powerOffCountdownActive]);
 
     // Centering Logic (Startup & Resize)
     useEffect(() => {
@@ -1798,6 +1821,42 @@ function App() {
         }
     };
 
+    const startPowerOffCountdown = () => {
+        if (powerOffBusy) return;
+        setPowerOffMessage('');
+        setPowerOffCountdownSeconds(5);
+        setPowerOffCountdownActive(true);
+    };
+
+    const cancelPowerOffCountdown = () => {
+        if (powerOffBusy) return;
+        setPowerOffCountdownActive(false);
+        setPowerOffCountdownSeconds(5);
+        setPowerOffMessage('Power off canceled.');
+    };
+
+    const executePowerOff = async () => {
+        if (powerOffBusy) return;
+
+        if (!ipcRenderer || typeof ipcRenderer.invoke !== 'function') {
+            setPowerOffCountdownActive(false);
+            setPowerOffCountdownSeconds(5);
+            setPowerOffMessage('Power off is only available in the Electron desktop app.');
+            return;
+        }
+
+        try {
+            setPowerOffBusy(true);
+            setPowerOffMessage('Powering off application...');
+            await ipcRenderer.invoke('app-power-off');
+        } catch (err) {
+            setPowerOffBusy(false);
+            setPowerOffCountdownActive(false);
+            setPowerOffCountdownSeconds(5);
+            setPowerOffMessage(`Power off failed: ${err?.message || String(err)}`);
+        }
+    };
+
     const handleFileUpload = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -2120,6 +2179,42 @@ function App() {
                 />
             )}
 
+            {powerOffCountdownActive && (
+                <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-md rounded-xl border border-red-700/50 bg-black/95 shadow-[0_0_55px_rgba(220,38,38,0.25)] overflow-hidden">
+                        <div className="px-5 py-4 border-b border-red-900/50 bg-gradient-to-r from-red-950/50 via-black/60 to-black/60">
+                            <h3 className="text-red-200 text-sm uppercase tracking-[0.18em]">Power Off Confirmation</h3>
+                            <p className="mt-1 text-[10px] text-red-300/80 uppercase tracking-[0.12em]">Frontend and backend will be terminated</p>
+                        </div>
+                        <div className="px-5 py-6">
+                            <p className="text-xs text-red-100/90">
+                                Power off in <span className="font-bold text-red-300">{powerOffCountdownSeconds}</span> seconds.
+                            </p>
+                            <p className="mt-2 text-[11px] text-red-200/85">
+                                You can cancel this action before the timer reaches zero.
+                            </p>
+                            <div className="mt-4 flex justify-end gap-2">
+                                <button
+                                    onClick={cancelPowerOffCountdown}
+                                    disabled={powerOffBusy}
+                                    className="text-[10px] uppercase tracking-wider px-3 py-1.5 rounded border border-cyan-900/50 bg-black/50 text-cyan-200 hover:border-cyan-600/70 disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={executePowerOff}
+                                    disabled={powerOffBusy}
+                                    className="text-[10px] uppercase tracking-wider px-3 py-1.5 rounded bg-red-700/85 hover:bg-red-600 text-white disabled:opacity-50"
+                                >
+                                    {powerOffBusy ? 'Powering Off...' : 'Power Off Now'}
+                                </button>
+                            </div>
+                            {powerOffMessage && <p className="mt-3 text-[10px] text-red-200/85">{powerOffMessage}</p>}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* --- PREMIUM UI LAYER --- */}
 
             {/* Hand Cursor - Only show if tracking is enabled */}
@@ -2191,6 +2286,14 @@ function App() {
                         <Clock size={12} className="text-cyan-500/50" />
                         <span>{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
+                    <button
+                        onClick={startPowerOffCountdown}
+                        disabled={powerOffBusy || powerOffCountdownActive}
+                        className="p-1 hover:bg-red-900/50 rounded text-red-500 transition-colors disabled:opacity-50"
+                        title="Power Off Application"
+                    >
+                        <Power size={18} />
+                    </button>
                     <button onClick={handleMinimize} className="p-1 hover:bg-cyan-900/50 rounded text-cyan-500 transition-colors">
                         <Minus size={18} />
                     </button>

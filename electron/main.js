@@ -622,6 +622,11 @@ app.whenReady().then(() => {
         return requestAppRestart('settings_button');
     });
 
+    ipcMain.handle('app-power-off', async () => {
+        requestAppShutdown('settings_power_off_button');
+        return { ok: true };
+    });
+
     checkBackendPort(8000).then((isTaken) => {
         if (isTaken) {
             console.log('Port 8000 is taken. Assuming backend is already running manually.');
