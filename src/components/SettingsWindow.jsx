@@ -245,6 +245,7 @@ const SettingsWindow = ({
     const [aiDisplayName, setAiDisplayName] = useState('Jarvis');
     const [aiDisplayNameMessage, setAiDisplayNameMessage] = useState('');
     const [restartBusy, setRestartBusy] = useState(false);
+    const [restartSplashVisible, setRestartSplashVisible] = useState(false);
 
     const dragRef = useRef({ active: false, offsetX: 0, offsetY: 0 });
     const faceSetupVideoRef = useRef(null);
@@ -783,10 +784,12 @@ const SettingsWindow = ({
 
         try {
             setRestartBusy(true);
+            setRestartSplashVisible(true);
             setAiDisplayNameMessage('Restarting ADA (frontend + backend)...');
             await ipcRenderer.invoke('app-restart');
         } catch (err) {
             setRestartBusy(false);
+            setRestartSplashVisible(false);
             setAiDisplayNameMessage(`Restart failed: ${err?.message || String(err)}`);
         }
     };
@@ -1606,6 +1609,29 @@ const SettingsWindow = ({
                                     {clearMemoryBusy ? 'Clearing...' : 'Delete All'}
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {restartSplashVisible && (
+                <div className="fixed inset-0 z-[90] bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+                    <div className="w-full max-w-lg rounded-xl border border-cyan-500/40 bg-black/95 shadow-[0_0_55px_rgba(6,182,212,0.25)] overflow-hidden">
+                        <div className="px-5 py-4 border-b border-cyan-900/50 bg-gradient-to-r from-cyan-950/40 via-black/60 to-black/60">
+                            <h3 className="text-cyan-200 text-sm uppercase tracking-[0.18em]">Restarting {activeAiName}</h3>
+                            <p className="mt-1 text-[10px] text-cyan-400/80 uppercase tracking-[0.12em]">System restart in progress</p>
+                        </div>
+                        <div className="px-5 py-6">
+                            <div className="flex items-center gap-3 text-cyan-200/95">
+                                <div className="h-5 w-5 rounded-full border-2 border-cyan-500/40 border-t-cyan-300 animate-spin" />
+                                <span className="text-xs tracking-wide">Restarting frontend and backend. Please wait...</span>
+                            </div>
+                            <div className="mt-4 h-1.5 w-full rounded-full bg-cyan-950/60 overflow-hidden">
+                                <div className="h-full w-1/3 bg-cyan-400/80 animate-pulse" />
+                            </div>
+                            <p className="mt-4 text-[11px] text-cyan-400/75 leading-relaxed">
+                                UI controls are temporarily locked until restart is complete.
+                            </p>
                         </div>
                     </div>
                 </div>
