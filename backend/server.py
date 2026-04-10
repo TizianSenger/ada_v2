@@ -138,6 +138,19 @@ DEFAULT_SETTINGS = {
     "tapo_password": "",
     "voice_name": "Kore",
     "ai_display_name": "Jarvis",
+    "personality_preset": "CLASSIC_CURRENT",
+    "personality_custom": {
+        "warmth": 65,
+        "emotionality": 60,
+        "empathy": 70,
+        "humor": 40,
+        "directness": 70,
+        "creativity": 55,
+        "formality": 45,
+        "assertiveness": 55,
+        "patience": 65,
+        "curiosity": 60
+    },
     "camera_flipped": False, # Invert cursor horizontal direction
     "show_lock_button": True,
     "whatsapp_monitor_enabled": False,
@@ -1885,6 +1898,47 @@ async def update_settings(sid, data):
         SETTINGS["ai_display_name"] = safe_name
         print(f"[SERVER] AI display name set to: {safe_name}")
         await sio.emit('status', {'msg': f'AI display name saved: {safe_name}. Restart required to apply in all UI labels.'}, room=sid)
+
+    if "personality_preset" in data or "personality_custom" in data:
+        allowed_presets = {
+            "CLASSIC_CURRENT",
+            "FOCUSED_PRO",
+            "CREATIVE_COACH",
+            "CALM_ANALYST",
+            "EXTREME_EMOTIONAL_INTELLIGENCE",
+            "CUSTOM_MIX",
+        }
+
+        raw_preset = str(data.get("personality_preset", SETTINGS.get("personality_preset", "CLASSIC_CURRENT")) or "").strip().upper()
+        preset = raw_preset if raw_preset in allowed_presets else "CLASSIC_CURRENT"
+
+        current_custom = SETTINGS.get("personality_custom") if isinstance(SETTINGS.get("personality_custom"), dict) else {}
+        incoming_custom = data.get("personality_custom") if isinstance(data.get("personality_custom"), dict) else current_custom
+
+        def clamp_slider(value, fallback):
+            try:
+                num = int(value)
+            except Exception:
+                num = int(fallback)
+            return max(0, min(100, num))
+
+        sanitized_custom = {
+            "warmth": clamp_slider(incoming_custom.get("warmth", current_custom.get("warmth", 65)), 65),
+            "emotionality": clamp_slider(incoming_custom.get("emotionality", current_custom.get("emotionality", 60)), 60),
+            "empathy": clamp_slider(incoming_custom.get("empathy", current_custom.get("empathy", 70)), 70),
+            "humor": clamp_slider(incoming_custom.get("humor", current_custom.get("humor", 40)), 40),
+            "directness": clamp_slider(incoming_custom.get("directness", current_custom.get("directness", 70)), 70),
+            "creativity": clamp_slider(incoming_custom.get("creativity", current_custom.get("creativity", 55)), 55),
+            "formality": clamp_slider(incoming_custom.get("formality", current_custom.get("formality", 45)), 45),
+            "assertiveness": clamp_slider(incoming_custom.get("assertiveness", current_custom.get("assertiveness", 55)), 55),
+            "patience": clamp_slider(incoming_custom.get("patience", current_custom.get("patience", 65)), 65),
+            "curiosity": clamp_slider(incoming_custom.get("curiosity", current_custom.get("curiosity", 60)), 60),
+        }
+
+        SETTINGS["personality_preset"] = preset
+        SETTINGS["personality_custom"] = sanitized_custom
+        print(f"[SERVER] Personality preset set to: {preset} | custom={sanitized_custom}")
+        await sio.emit('status', {'msg': 'Personality profile saved. Restart required to apply the new model personality.'}, room=sid)
 
     if "gemini_api_key" in data:
         new_key = str(data.get("gemini_api_key", "") or "").strip()

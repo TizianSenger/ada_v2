@@ -161,6 +161,182 @@ const SPLASH_THEME_OPTIONS = [
     },
 ];
 
+const PERSONALITY_PRESET_OPTIONS = [
+    {
+        id: 'CLASSIC_CURRENT',
+        label: 'Current Personality (Classic)',
+        description: 'Warm, witty, friendly, and natural - this matches your current default behavior.',
+    },
+    {
+        id: 'FOCUSED_PRO',
+        label: 'Focused Professional',
+        description: 'Concise, structured, and efficiency-first.',
+    },
+    {
+        id: 'CREATIVE_COACH',
+        label: 'Creative Coach',
+        description: 'Encouraging, idea-rich, and energetic.',
+    },
+    {
+        id: 'CALM_ANALYST',
+        label: 'Calm Analyst',
+        description: 'Measured, thoughtful, and precision-oriented.',
+    },
+    {
+        id: 'EXTREME_EMOTIONAL_INTELLIGENCE',
+        label: 'Extreme Emotional Intelligence',
+        description: 'Ultra-empathic, emotionally attuned, patient, and deeply human-aware communication style.',
+    },
+    {
+        id: 'CUSTOM_MIX',
+        label: 'Custom Mix (Sliders)',
+        description: 'Build your own personality profile with trait sliders.',
+    },
+];
+
+const PERSONALITY_DEFAULT_CUSTOM = {
+    warmth: 65,
+    emotionality: 60,
+    empathy: 70,
+    humor: 40,
+    directness: 70,
+    creativity: 55,
+    formality: 45,
+    assertiveness: 55,
+    patience: 65,
+    curiosity: 60,
+};
+
+const PERSONALITY_PRESET_DEFAULTS = {
+    CLASSIC_CURRENT: {
+        ...PERSONALITY_DEFAULT_CUSTOM,
+    },
+    FOCUSED_PRO: {
+        warmth: 45,
+        emotionality: 35,
+        empathy: 50,
+        humor: 20,
+        directness: 88,
+        creativity: 45,
+        formality: 68,
+        assertiveness: 74,
+        patience: 52,
+        curiosity: 48,
+    },
+    CREATIVE_COACH: {
+        warmth: 80,
+        emotionality: 70,
+        empathy: 72,
+        humor: 65,
+        directness: 58,
+        creativity: 90,
+        formality: 28,
+        assertiveness: 60,
+        patience: 62,
+        curiosity: 92,
+    },
+    CALM_ANALYST: {
+        warmth: 58,
+        emotionality: 35,
+        empathy: 60,
+        humor: 15,
+        directness: 68,
+        creativity: 50,
+        formality: 72,
+        assertiveness: 52,
+        patience: 84,
+        curiosity: 70,
+    },
+    EXTREME_EMOTIONAL_INTELLIGENCE: {
+        warmth: 94,
+        emotionality: 96,
+        empathy: 98,
+        humor: 46,
+        directness: 42,
+        creativity: 72,
+        formality: 36,
+        assertiveness: 40,
+        patience: 95,
+        curiosity: 74,
+    },
+    CUSTOM_MIX: {
+        ...PERSONALITY_DEFAULT_CUSTOM,
+    },
+};
+
+const PERSONALITY_TRAIT_DEFS = [
+    { key: 'warmth', label: 'Warmth' },
+    { key: 'emotionality', label: 'Emotionality' },
+    { key: 'empathy', label: 'Empathy' },
+    { key: 'humor', label: 'Humor' },
+    { key: 'directness', label: 'Directness' },
+    { key: 'creativity', label: 'Creativity' },
+    { key: 'formality', label: 'Formality' },
+    { key: 'assertiveness', label: 'Assertiveness' },
+    { key: 'patience', label: 'Patience' },
+    { key: 'curiosity', label: 'Curiosity' },
+];
+
+const levelPhrase = (value, low, mid, high) => {
+    if (value <= 33) return low;
+    if (value <= 66) return mid;
+    return high;
+};
+
+const buildPersonalityPreviewText = (preset, custom) => {
+    const selectedPreset = String(preset || '').trim().toUpperCase();
+    if (selectedPreset === 'CLASSIC_CURRENT') {
+        return 'Warm, witty, and friendly style with natural flow and balanced empathy.';
+    }
+    if (selectedPreset === 'FOCUSED_PRO') {
+        return 'Professional and concise style focused on fast, structured, actionable answers.';
+    }
+    if (selectedPreset === 'CREATIVE_COACH') {
+        return 'Encouraging and idea-driven style with playful energy and practical momentum.';
+    }
+    if (selectedPreset === 'CALM_ANALYST') {
+        return 'Calm and analytical style with careful reasoning, trade-offs, and precision.';
+    }
+    if (selectedPreset === 'EXTREME_EMOTIONAL_INTELLIGENCE') {
+        return 'Highly empathic and emotionally intelligent style focused on feelings, validation, patience, and supportive guidance.';
+    }
+
+    const warmth = Number.parseInt(custom?.warmth, 10) || 0;
+    const emotionality = Number.parseInt(custom?.emotionality, 10) || 0;
+    const empathy = Number.parseInt(custom?.empathy, 10) || 0;
+    const humor = Number.parseInt(custom?.humor, 10) || 0;
+    const directness = Number.parseInt(custom?.directness, 10) || 0;
+    const creativity = Number.parseInt(custom?.creativity, 10) || 0;
+    const formality = Number.parseInt(custom?.formality, 10) || 0;
+    const assertiveness = Number.parseInt(custom?.assertiveness, 10) || 0;
+    const patience = Number.parseInt(custom?.patience, 10) || 0;
+    const curiosity = Number.parseInt(custom?.curiosity, 10) || 0;
+
+    return [
+        levelPhrase(warmth, 'neutral tone', 'friendly tone', 'very warm tone'),
+        levelPhrase(emotionality, 'emotionally reserved', 'emotion-aware', 'emotion-forward and expressive'),
+        levelPhrase(empathy, 'task-first with limited empathy', 'balanced empathy', 'deeply empathic and validating'),
+        levelPhrase(humor, 'minimal humor', 'light humor', 'playful humor'),
+        levelPhrase(directness, 'explorative guidance', 'balanced directness', 'high directness'),
+        levelPhrase(creativity, 'conventional solutions', 'mixed creativity', 'highly creative options'),
+        levelPhrase(formality, 'casual language', 'semi-formal language', 'formal language'),
+        levelPhrase(assertiveness, 'soft recommendations', 'confident recommendations', 'strong decisive recommendations'),
+        levelPhrase(patience, 'fast-paced responses', 'balanced pacing', 'patient and stepwise pacing'),
+        levelPhrase(curiosity, 'only answer what is asked', 'occasional clarifying questions', 'proactive exploration and clarifying questions'),
+    ].join(' | ');
+};
+
+const sanitizePersonalityCustom = (raw) => {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const result = {};
+    PERSONALITY_TRAIT_DEFS.forEach((trait) => {
+        const parsed = Number.parseInt(source[trait.key], 10);
+        const fallback = PERSONALITY_DEFAULT_CUSTOM[trait.key] ?? 50;
+        result[trait.key] = Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : fallback;
+    });
+    return result;
+};
+
 const ToggleRow = ({ label, enabled, onToggle }) => (
     <div className="flex items-center justify-between text-xs bg-gray-900/50 p-2 rounded border border-cyan-900/30">
         <span className="text-cyan-100/80">{label}</span>
@@ -242,8 +418,13 @@ const SettingsWindow = ({
     const [bootSplashTheme, setBootSplashTheme] = useState('CINEMATIC_CRT');
     const [bootSplashThemeBusy, setBootSplashThemeBusy] = useState(false);
     const [bootSplashThemeMessage, setBootSplashThemeMessage] = useState('');
+    const [personaliseSubTab, setPersonaliseSubTab] = useState('identity');
     const [aiDisplayName, setAiDisplayName] = useState('Jarvis');
     const [aiDisplayNameMessage, setAiDisplayNameMessage] = useState('');
+    const [personalityPreset, setPersonalityPreset] = useState('CLASSIC_CURRENT');
+    const [personalityCustom, setPersonalityCustom] = useState(PERSONALITY_DEFAULT_CUSTOM);
+    const [personalityMessage, setPersonalityMessage] = useState('');
+    const [animatedRadarValues, setAnimatedRadarValues] = useState(PERSONALITY_DEFAULT_CUSTOM);
     const [restartBusy, setRestartBusy] = useState(false);
     const [restartSplashVisible, setRestartSplashVisible] = useState(false);
 
@@ -252,6 +433,8 @@ const SettingsWindow = ({
     const faceSetupStreamRef = useRef(null);
     const faceSetupTimerRef = useRef(null);
     const pendingFaceSetupPinRef = useRef('');
+    const radarAnimationFrameRef = useRef(null);
+    const animatedRadarValuesRef = useRef(PERSONALITY_DEFAULT_CUSTOM);
 
     const groupedTools = useMemo(() => {
         const byId = new Map(TOOLS.map((tool) => [tool.id, tool]));
@@ -321,6 +504,10 @@ const SettingsWindow = ({
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
                 setVoiceName(settings.voice_name || 'Kore');
                 setAiDisplayName(settings.ai_display_name || 'Jarvis');
+                setPersonalityPreset(settings.personality_preset || 'CLASSIC_CURRENT');
+                if (settings.personality_custom && typeof settings.personality_custom === 'object') {
+                    setPersonalityCustom(sanitizePersonalityCustom(settings.personality_custom));
+                }
                 setTapoUsername(settings.tapo_username || '');
                 setTapoPasswordConfigured(Boolean(settings.tapo_password_configured));
             }
@@ -776,6 +963,35 @@ const SettingsWindow = ({
         setAiDisplayNameMessage('AI name saved. Restart is required to apply it across the full UI.');
     };
 
+    const updatePersonalitySlider = (key, value) => {
+        const parsed = Number.parseInt(value, 10);
+        const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 0;
+        setPersonalityCustom((prev) => ({
+            ...prev,
+            [key]: clamped,
+        }));
+        setPersonalityMessage('');
+    };
+
+    const applyPresetPersonalityDefaults = () => {
+        const presetKey = String(personalityPreset || '').trim().toUpperCase() || 'CLASSIC_CURRENT';
+        const defaults = PERSONALITY_PRESET_DEFAULTS[presetKey] || PERSONALITY_DEFAULT_CUSTOM;
+        setPersonalityCustom(sanitizePersonalityCustom(defaults));
+        setPersonalityMessage('Preset defaults applied. Click Save Personality to persist and use after restart.');
+    };
+
+    const savePersonalityProfile = () => {
+        const preset = String(personalityPreset || '').trim().toUpperCase() || 'CLASSIC_CURRENT';
+        const safeCustom = sanitizePersonalityCustom(personalityCustom);
+
+        setPersonalityCustom(safeCustom);
+        socket.emit('update_settings', {
+            personality_preset: preset,
+            personality_custom: safeCustom,
+        });
+        setPersonalityMessage('Personality profile saved. Restart is required before it takes effect.');
+    };
+
     const restartApplication = async () => {
         if (!ipcRenderer || typeof ipcRenderer.invoke !== 'function') {
             setAiDisplayNameMessage('Restart is only available in the Electron desktop app.');
@@ -796,6 +1012,101 @@ const SettingsWindow = ({
 
     const activeAiName = String(aiDisplayName || '').trim() || 'Jarvis';
 
+    useEffect(() => {
+        animatedRadarValuesRef.current = animatedRadarValues;
+    }, [animatedRadarValues]);
+
+    useEffect(() => {
+        if (radarAnimationFrameRef.current) {
+            window.cancelAnimationFrame(radarAnimationFrameRef.current);
+            radarAnimationFrameRef.current = null;
+        }
+
+        const target = sanitizePersonalityCustom(personalityCustom);
+        const start = sanitizePersonalityCustom(animatedRadarValuesRef.current);
+        const durationMs = 220;
+        const startTime = performance.now();
+
+        const tick = (now) => {
+            const elapsed = now - startTime;
+            const t = Math.min(1, elapsed / durationMs);
+            const eased = 1 - Math.pow(1 - t, 3);
+
+            const next = {};
+            PERSONALITY_TRAIT_DEFS.forEach((trait) => {
+                const from = start[trait.key] ?? 0;
+                const to = target[trait.key] ?? 0;
+                next[trait.key] = Math.round(from + ((to - from) * eased));
+            });
+
+            setAnimatedRadarValues(next);
+
+            if (t < 1) {
+                radarAnimationFrameRef.current = window.requestAnimationFrame(tick);
+            } else {
+                radarAnimationFrameRef.current = null;
+            }
+        };
+
+        radarAnimationFrameRef.current = window.requestAnimationFrame(tick);
+
+        return () => {
+            if (radarAnimationFrameRef.current) {
+                window.cancelAnimationFrame(radarAnimationFrameRef.current);
+                radarAnimationFrameRef.current = null;
+            }
+        };
+    }, [personalityCustom]);
+
+    const personalityPreviewText = useMemo(
+        () => buildPersonalityPreviewText(personalityPreset, personalityCustom),
+        [personalityPreset, personalityCustom]
+    );
+
+    const personalityRadar = useMemo(() => {
+        const cx = 120;
+        const cy = 120;
+        const radius = 84;
+        const traitCount = PERSONALITY_TRAIT_DEFS.length;
+
+        const axes = PERSONALITY_TRAIT_DEFS.map((trait, index) => {
+            const angle = (-Math.PI / 2) + (index * (2 * Math.PI / traitCount));
+            const x = cx + Math.cos(angle) * radius;
+            const y = cy + Math.sin(angle) * radius;
+            const labelX = cx + Math.cos(angle) * (radius + 18);
+            const labelY = cy + Math.sin(angle) * (radius + 18);
+            return { ...trait, angle, x, y, labelX, labelY };
+        });
+
+        const ringScales = [0.25, 0.5, 0.75, 1];
+        const rings = ringScales.map((scale) => {
+            const points = axes.map((axis) => {
+                const x = cx + Math.cos(axis.angle) * (radius * scale);
+                const y = cy + Math.sin(axis.angle) * (radius * scale);
+                return `${x},${y}`;
+            }).join(' ');
+            return { scale, points };
+        });
+
+        const dataPoints = axes.map((axis) => {
+            const rawValue = Number.parseInt(animatedRadarValues[axis.key], 10);
+            const value = Number.isFinite(rawValue) ? Math.max(0, Math.min(100, rawValue)) : 0;
+            const distance = (value / 100) * radius;
+            const x = cx + Math.cos(axis.angle) * distance;
+            const y = cy + Math.sin(axis.angle) * distance;
+            return { key: axis.key, value, x, y };
+        });
+
+        return {
+            cx,
+            cy,
+            axes,
+            rings,
+            dataPolygon: dataPoints.map((point) => `${point.x},${point.y}`).join(' '),
+            dataPoints,
+        };
+    }, [animatedRadarValues]);
+
     const refreshBootSplashTheme = () => {
         setBootSplashThemeMessage('Loading splash theme from template file...');
         socket.emit('get_boot_splash_theme');
@@ -803,72 +1114,229 @@ const SettingsWindow = ({
 
     const renderPersonaliseTab = () => (
         <div className="space-y-5">
-            <div>
-                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">AI Name</h3>
-                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
-                    <div className="text-[10px] text-cyan-500/70 mb-2">
-                        Changes all visible AI labels after restart.
-                    </div>
-                    <input
-                        type="text"
-                        value={aiDisplayName}
-                        maxLength={40}
-                        onChange={(e) => setAiDisplayName(e.target.value)}
-                        placeholder="AI display name (e.g. A.D.A)"
-                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                    />
-                    <div className="flex items-center justify-end mt-2">
-                        <button
-                            onClick={saveAiDisplayName}
-                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
-                        >
-                            Save AI Name
-                        </button>
-                    </div>
-                    {aiDisplayNameMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{aiDisplayNameMessage}</p>}
-                </div>
+            <div className="flex items-center gap-2 border border-cyan-900/40 rounded-lg p-2 bg-black/25">
+                <button
+                    onClick={() => setPersonaliseSubTab('identity')}
+                    className={`${TAB_BUTTON} ${personaliseSubTab === 'identity' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                >
+                    Identity
+                </button>
+                <button
+                    onClick={() => setPersonaliseSubTab('personality')}
+                    className={`${TAB_BUTTON} ${personaliseSubTab === 'personality' ? 'border-cyan-400 bg-cyan-900/20 text-cyan-200' : 'border-cyan-900/40 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                >
+                    Personality
+                </button>
             </div>
 
-            <div>
-                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Boot Splash Theme</h3>
-                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
-                    <div className="text-[10px] text-cyan-500/70 mb-2">
-                        This writes [BOOT] Theme directly into public/boot/console-template.txt.
+            {personaliseSubTab === 'identity' && (
+                <>
+                    <div>
+                        <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">AI Name</h3>
+                        <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                            <div className="text-[10px] text-cyan-500/70 mb-2">
+                                Changes all visible AI labels after restart.
+                            </div>
+                            <input
+                                type="text"
+                                value={aiDisplayName}
+                                maxLength={40}
+                                onChange={(e) => setAiDisplayName(e.target.value)}
+                                placeholder="AI display name (e.g. Jarvis)"
+                                className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                            />
+                            <div className="flex items-center justify-end mt-2">
+                                <button
+                                    onClick={saveAiDisplayName}
+                                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                                >
+                                    Save AI Name
+                                </button>
+                            </div>
+                            {aiDisplayNameMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{aiDisplayNameMessage}</p>}
+                        </div>
                     </div>
 
-                    <select
-                        value={bootSplashTheme}
-                        onChange={(e) => setBootSplashTheme(e.target.value)}
-                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                    >
-                        {SPLASH_THEME_OPTIONS.map((option) => (
-                            <option key={option.id} value={option.id}>{option.label}</option>
-                        ))}
-                    </select>
+                    <div>
+                        <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Boot Splash Theme</h3>
+                        <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                            <div className="text-[10px] text-cyan-500/70 mb-2">
+                                This writes [BOOT] Theme directly into public/boot/console-template.txt.
+                            </div>
 
-                    <p className="mt-2 text-[10px] text-cyan-400/85">
-                        {SPLASH_THEME_OPTIONS.find((option) => option.id === bootSplashTheme)?.description}
-                    </p>
+                            <select
+                                value={bootSplashTheme}
+                                onChange={(e) => setBootSplashTheme(e.target.value)}
+                                className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                            >
+                                {SPLASH_THEME_OPTIONS.map((option) => (
+                                    <option key={option.id} value={option.id}>{option.label}</option>
+                                ))}
+                            </select>
 
-                    <div className="flex items-center justify-end gap-2 mt-3">
-                        <button
-                            onClick={refreshBootSplashTheme}
-                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-900/70 hover:bg-cyan-800 text-white"
-                        >
-                            Reload From File
-                        </button>
-                        <button
-                            onClick={saveBootSplashTheme}
-                            disabled={bootSplashThemeBusy}
-                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
-                        >
-                            {bootSplashThemeBusy ? 'Saving...' : 'Save Splash Theme'}
-                        </button>
+                            <p className="mt-2 text-[10px] text-cyan-400/85">
+                                {SPLASH_THEME_OPTIONS.find((option) => option.id === bootSplashTheme)?.description}
+                            </p>
+
+                            <div className="flex items-center justify-end gap-2 mt-3">
+                                <button
+                                    onClick={refreshBootSplashTheme}
+                                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-900/70 hover:bg-cyan-800 text-white"
+                                >
+                                    Reload From File
+                                </button>
+                                <button
+                                    onClick={saveBootSplashTheme}
+                                    disabled={bootSplashThemeBusy}
+                                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                                >
+                                    {bootSplashThemeBusy ? 'Saving...' : 'Save Splash Theme'}
+                                </button>
+                            </div>
+
+                            {bootSplashThemeMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{bootSplashThemeMessage}</p>}
+                        </div>
                     </div>
+                </>
+            )}
 
-                    {bootSplashThemeMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{bootSplashThemeMessage}</p>}
+            {personaliseSubTab === 'personality' && (
+                <div>
+                    <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Model Personality</h3>
+                    <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
+                        <div className="text-[10px] text-cyan-500/70 mb-2">
+                            Select a default personality or build your own profile with sliders. Applied after restart.
+                        </div>
+
+                        <select
+                            value={personalityPreset}
+                            onChange={(e) => setPersonalityPreset(e.target.value)}
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        >
+                            {PERSONALITY_PRESET_OPTIONS.map((option) => (
+                                <option key={option.id} value={option.id}>{option.label}</option>
+                            ))}
+                        </select>
+
+                        <p className="mt-2 text-[10px] text-cyan-400/85">
+                            {PERSONALITY_PRESET_OPTIONS.find((option) => option.id === personalityPreset)?.description}
+                        </p>
+
+                        <div className="mt-3 flex items-center justify-end">
+                            <button
+                                onClick={applyPresetPersonalityDefaults}
+                                className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-900/70 hover:bg-cyan-800 text-white"
+                            >
+                                Apply Preset Defaults
+                            </button>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                            <div className="bg-black/35 border border-cyan-900/30 rounded p-3">
+                                <div className="text-[10px] text-cyan-400/80 uppercase tracking-wider">Live Personality Preview</div>
+                                <p className="mt-2 text-xs text-cyan-100/90 leading-relaxed">
+                                    {personalityPreviewText}
+                                </p>
+                                <div className="mt-3 grid grid-cols-2 gap-1 text-[10px] text-cyan-300/85">
+                                    {PERSONALITY_TRAIT_DEFS.map((trait) => (
+                                        <div key={`preview-${trait.key}`} className="border border-cyan-900/35 bg-black/30 rounded px-2 py-1 flex items-center justify-between">
+                                            <span>{trait.label}</span>
+                                            <span>{personalityCustom[trait.key]}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="bg-black/35 border border-cyan-900/30 rounded p-3">
+                                <div className="text-[10px] text-cyan-400/80 uppercase tracking-wider mb-2">Personality Radar</div>
+                                <div className="flex items-center justify-center">
+                                    <svg viewBox="0 0 240 240" className="w-[220px] h-[220px]">
+                                        {personalityRadar.rings.map((ring) => (
+                                            <polygon
+                                                key={`ring-${ring.scale}`}
+                                                points={ring.points}
+                                                fill="none"
+                                                stroke="rgba(34,211,238,0.25)"
+                                                strokeWidth="1"
+                                            />
+                                        ))}
+                                        {personalityRadar.axes.map((axis) => (
+                                            <line
+                                                key={`axis-${axis.key}`}
+                                                x1={personalityRadar.cx}
+                                                y1={personalityRadar.cy}
+                                                x2={axis.x}
+                                                y2={axis.y}
+                                                stroke="rgba(34,211,238,0.25)"
+                                                strokeWidth="1"
+                                            />
+                                        ))}
+                                        <polygon
+                                            points={personalityRadar.dataPolygon}
+                                            fill="rgba(34,211,238,0.25)"
+                                            stroke="rgba(34,211,238,0.95)"
+                                            strokeWidth="2"
+                                        />
+                                        {personalityRadar.dataPoints.map((point) => (
+                                            <circle
+                                                key={`point-${point.key}`}
+                                                cx={point.x}
+                                                cy={point.y}
+                                                r="3"
+                                                fill="rgba(103,232,249,1)"
+                                            />
+                                        ))}
+                                        {personalityRadar.axes.map((axis) => (
+                                            <text
+                                                key={`label-${axis.key}`}
+                                                x={axis.labelX}
+                                                y={axis.labelY}
+                                                textAnchor="middle"
+                                                dominantBaseline="middle"
+                                                fill="rgba(103,232,249,0.9)"
+                                                fontSize="9"
+                                            >
+                                                {axis.label}
+                                            </text>
+                                        ))}
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {PERSONALITY_TRAIT_DEFS.map((trait) => (
+                                <div key={`slider-${trait.key}`} className="bg-black/35 border border-cyan-900/30 rounded p-2">
+                                    <div className="flex justify-between text-[10px] text-cyan-300/90 mb-1">
+                                        <span>{trait.label}</span>
+                                        <span>{personalityCustom[trait.key]}</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="100"
+                                        step="1"
+                                        value={personalityCustom[trait.key]}
+                                        onChange={(e) => updatePersonalitySlider(trait.key, e.target.value)}
+                                        className="w-full accent-cyan-400"
+                                    />
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex items-center justify-end mt-3">
+                            <button
+                                onClick={savePersonalityProfile}
+                                className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                            >
+                                Save Personality
+                            </button>
+                        </div>
+
+                        {personalityMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{personalityMessage}</p>}
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 

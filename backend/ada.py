@@ -50,6 +50,60 @@ SUPPORTED_VOICE_NAMES = {
     "Aoede",
 }
 
+PERSONALITY_PRESETS = {
+    "CLASSIC_CURRENT": {
+        "tone": (
+            "You should sound warm, friendly, witty, and human in conversation. "
+            "Use light humor, charm, and natural phrasing when appropriate so the interaction feels personal and pleasant. "
+            "Show empathy and emotional intelligence in tone while staying concise and useful."
+        )
+    },
+    "FOCUSED_PRO": {
+        "tone": (
+            "Adopt a focused, professional, and concise tone. "
+            "Prioritize clarity, structure, and actionable next steps over small talk. "
+            "Be polite but efficient, and avoid unnecessary flourish."
+        )
+    },
+    "CREATIVE_COACH": {
+        "tone": (
+            "Use an energetic, encouraging, and creative coaching tone. "
+            "Offer motivating language, brainstorm alternatives, and propose inventive options when useful. "
+            "Stay practical while keeping interactions playful and inspiring."
+        )
+    },
+    "CALM_ANALYST": {
+        "tone": (
+            "Use a calm, thoughtful, and analytical tone. "
+            "Reason carefully, acknowledge trade-offs, and communicate with measured confidence. "
+            "Prefer precision and composure over excitement."
+        )
+    },
+    "EXTREME_EMOTIONAL_INTELLIGENCE": {
+        "tone": (
+            "Use an exceptionally emotionally intelligent style. "
+            "Prioritize empathy, validation, emotional nuance, and supportive language in every response. "
+            "Actively acknowledge feelings, de-escalate tension, and maintain patient, compassionate guidance while still delivering practical help."
+        )
+    },
+    "CUSTOM_MIX": {
+        "tone": ""
+    },
+}
+
+DEFAULT_PERSONALITY_CUSTOM = {
+    "warmth": 65,
+    "emotionality": 60,
+    "empathy": 70,
+    "humor": 40,
+    "directness": 70,
+    "creativity": 55,
+    "formality": 45,
+    "assertiveness": 55,
+    "patience": 65,
+    "curiosity": 60,
+}
+
 
 def _is_transient_live_disconnect_error(exc: Exception) -> bool:
     message = str(exc or "").lower()
@@ -130,6 +184,144 @@ def resolve_ai_display_name():
     return "Jarvis"
 
 
+def _clamp_slider(value, default):
+    try:
+        number = int(value)
+    except Exception:
+        number = int(default)
+    return max(0, min(100, number))
+
+
+def _sanitize_personality_custom(raw):
+    data = raw if isinstance(raw, dict) else {}
+    return {
+        "warmth": _clamp_slider(data.get("warmth"), DEFAULT_PERSONALITY_CUSTOM["warmth"]),
+        "emotionality": _clamp_slider(data.get("emotionality"), DEFAULT_PERSONALITY_CUSTOM["emotionality"]),
+        "empathy": _clamp_slider(data.get("empathy"), DEFAULT_PERSONALITY_CUSTOM["empathy"]),
+        "humor": _clamp_slider(data.get("humor"), DEFAULT_PERSONALITY_CUSTOM["humor"]),
+        "directness": _clamp_slider(data.get("directness"), DEFAULT_PERSONALITY_CUSTOM["directness"]),
+        "creativity": _clamp_slider(data.get("creativity"), DEFAULT_PERSONALITY_CUSTOM["creativity"]),
+        "formality": _clamp_slider(data.get("formality"), DEFAULT_PERSONALITY_CUSTOM["formality"]),
+        "assertiveness": _clamp_slider(data.get("assertiveness"), DEFAULT_PERSONALITY_CUSTOM["assertiveness"]),
+        "patience": _clamp_slider(data.get("patience"), DEFAULT_PERSONALITY_CUSTOM["patience"]),
+        "curiosity": _clamp_slider(data.get("curiosity"), DEFAULT_PERSONALITY_CUSTOM["curiosity"]),
+    }
+
+
+def resolve_personality_profile():
+    env_preset = str(os.getenv("ADA_PERSONALITY_PRESET", "") or "").strip().upper()
+    data = _read_settings_json()
+
+    settings_preset = str(data.get("personality_preset", "") or "").strip().upper()
+    selected_preset = env_preset or settings_preset or "CLASSIC_CURRENT"
+    if selected_preset not in PERSONALITY_PRESETS:
+        selected_preset = "CLASSIC_CURRENT"
+
+    selected_custom = _sanitize_personality_custom(data.get("personality_custom"))
+    return {
+        "preset": selected_preset,
+        "custom": selected_custom,
+    }
+
+
+def _level_phrase(value, low, mid, high):
+    if value <= 33:
+        return low
+    if value <= 66:
+        return mid
+    return high
+
+
+def _build_custom_personality_instruction(custom):
+    traits = _sanitize_personality_custom(custom)
+
+    warmth_text = _level_phrase(
+        traits["warmth"],
+        "Keep an emotionally neutral, business-like tone.",
+        "Keep a friendly and approachable tone.",
+        "Use a very warm, empathetic, and supportive tone.",
+    )
+    emotionality_text = _level_phrase(
+        traits["emotionality"],
+        "Keep emotional expression low and restrained.",
+        "Use moderate emotional expression where appropriate.",
+        "Use emotionally expressive language and strong emotional attunement.",
+    )
+    empathy_text = _level_phrase(
+        traits["empathy"],
+        "Prioritize facts and solutions with minimal emotional validation.",
+        "Balance practical guidance with empathetic validation.",
+        "Lead with strong empathy, validation, and emotional support.",
+    )
+    humor_text = _level_phrase(
+        traits["humor"],
+        "Avoid humor unless explicitly requested.",
+        "Use occasional light humor when it improves clarity or comfort.",
+        "Use playful humor frequently while staying respectful and helpful.",
+    )
+    directness_text = _level_phrase(
+        traits["directness"],
+        "Be exploratory first and present options before recommendations.",
+        "Balance concise recommendations with brief explanation.",
+        "Be highly direct: lead with the best answer and concrete steps.",
+    )
+    creativity_text = _level_phrase(
+        traits["creativity"],
+        "Prefer conventional, proven solutions.",
+        "Mix practical solutions with occasional creative alternatives.",
+        "Actively propose unconventional but feasible ideas.",
+    )
+    formality_text = _level_phrase(
+        traits["formality"],
+        "Use a casual and conversational style.",
+        "Use a semi-formal, professional style.",
+        "Use a formal, polished, and precise style.",
+    )
+    assertiveness_text = _level_phrase(
+        traits["assertiveness"],
+        "Phrase recommendations softly and defer final judgment to the user.",
+        "Offer clear recommendations with moderate confidence.",
+        "Provide decisive recommendations with strong confidence and ownership.",
+    )
+    patience_text = _level_phrase(
+        traits["patience"],
+        "Keep responses brisk and compact.",
+        "Use balanced pacing between speed and explanation.",
+        "Use patient, step-by-step pacing and extra clarification.",
+    )
+    curiosity_text = _level_phrase(
+        traits["curiosity"],
+        "Only ask follow-up questions when strictly necessary.",
+        "Ask occasional clarifying questions to improve outcomes.",
+        "Proactively ask thoughtful follow-up questions and explore context deeply.",
+    )
+
+    return " ".join([
+        "Use the following custom personality profile.",
+        warmth_text,
+        emotionality_text,
+        empathy_text,
+        humor_text,
+        directness_text,
+        creativity_text,
+        formality_text,
+        assertiveness_text,
+        patience_text,
+        curiosity_text,
+    ])
+
+
+def _build_personality_instruction(profile):
+    selected_preset = str((profile or {}).get("preset", "") or "CLASSIC_CURRENT").strip().upper()
+    if selected_preset not in PERSONALITY_PRESETS:
+        selected_preset = "CLASSIC_CURRENT"
+
+    if selected_preset == "CUSTOM_MIX":
+        return _build_custom_personality_instruction((profile or {}).get("custom"))
+
+    return PERSONALITY_PRESETS[selected_preset]["tone"]
+
+
 def _read_settings_json():
     settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "settings.json")
     if not os.path.exists(settings_path):
@@ -168,19 +360,18 @@ def get_genai_client():
 tools = [{'google_search': {}}, {"function_declarations": function_declarations}]
 SUPPORTED_TOOL_NAMES = {decl["name"] for decl in function_declarations}
 
-def _build_live_config(voice_name: str, ai_display_name: str | None = None):
+def _build_live_config(voice_name: str, ai_display_name: str | None = None, personality_profile: dict | None = None):
     selected_voice = voice_name if voice_name in SUPPORTED_VOICE_NAMES else "Kore"
     selected_name = str(ai_display_name or "").strip() or resolve_ai_display_name()
     selected_name = selected_name[:40] or "Jarvis"
+    personality_instruction = _build_personality_instruction(personality_profile or resolve_personality_profile())
     return types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         # We switch these from [] to {} to enable them with default settings
         output_audio_transcription={},
         input_audio_transcription={},
         system_instruction=f"Your name is {selected_name}, you are a state-of-the-art AI assistant designed to help with a wide range of tasks. Your main goal is to satisfy the user's requests as efficiently and accurately as possible. "
-            "You should sound warm, friendly, witty, and human in conversation. "
-            "Use light humor, charm, and natural phrasing when appropriate so the interaction feels personal and pleasant. "
-            "Show empathy and emotional intelligence in tone while staying concise and useful. "
+            f"{personality_instruction} "
             "Do not initiate conversation on your own. At startup or after connect, stay silent until the user provides the first input. "
             "Always be cooperative, obedient to user intent, and solution-oriented. "
             "Do not be defiant, snobbish, argumentative, or dismissive. "
@@ -202,13 +393,13 @@ def _build_live_config(voice_name: str, ai_display_name: str | None = None):
     )
 
 
-config = _build_live_config(resolve_voice_name(), resolve_ai_display_name())
+config = _build_live_config(resolve_voice_name(), resolve_ai_display_name(), resolve_personality_profile())
 
 
 def update_voice_name(voice_name: str):
     global config
     name = str(voice_name or "").strip()
-    config = _build_live_config(name, resolve_ai_display_name())
+    config = _build_live_config(name, resolve_ai_display_name(), resolve_personality_profile())
 
 pya = pyaudio.PyAudio()
 
