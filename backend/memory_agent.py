@@ -220,11 +220,14 @@ class MemoryAgent:
         room_counts: Dict[str, int] = {}
         type_counts: Dict[str, int] = {}
         wing_counts: Dict[str, int] = {}
+        room_type_counts: Dict[str, Dict[str, int]] = {}
+        room_previews: Dict[str, List[str]] = {}
         confidence_sum = 0.0
         confidence_count = 0
         short_entries = 0
         long_entries = 0
         hashes: Dict[str, int] = {}
+        timeline_points: List[Dict[str, str]] = []
 
         for idx, raw_doc in enumerate(docs):
             text = str(raw_doc or "").strip()
@@ -237,6 +240,16 @@ class MemoryAgent:
             room_counts[room] = room_counts.get(room, 0) + 1
             type_counts[mtype] = type_counts.get(mtype, 0) + 1
             wing_counts[mwing] = wing_counts.get(mwing, 0) + 1
+
+            per_room_types = room_type_counts.setdefault(room, {})
+            per_room_types[mtype] = per_room_types.get(mtype, 0) + 1
+
+            preview = text.replace("\n", " ").strip()
+            if preview:
+                preview = preview[:120] + ("..." if len(preview) > 120 else "")
+                room_previews.setdefault(room, [])
+                if len(room_previews[room]) < 3:
+                    room_previews[room].append(preview)
 
             conf = meta.get("confidence", None)
             if isinstance(conf, (int, float)):
@@ -254,12 +267,45 @@ class MemoryAgent:
                 digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()
                 hashes[digest] = hashes.get(digest, 0) + 1
 
+            timestamp = str(meta.get("timestamp", "") or "").strip()
+            if timestamp:
+                timeline_points.append({"room": room, "timestamp": timestamp})
+
         duplicate_candidates = sum(v - 1 for v in hashes.values() if v > 1)
         sampled = len(docs)
 
         room_top = sorted(room_counts.items(), key=lambda it: it[1], reverse=True)[:8]
         type_top = sorted(type_counts.items(), key=lambda it: it[1], reverse=True)[:8]
         wing_top = sorted(wing_counts.items(), key=lambda it: it[1], reverse=True)[:8]
+
+        room_details: List[Dict[str, Any]] = []
+        for room_name, count in sorted(room_counts.items(), key=lambda it: it[1], reverse=True)[:16]:
+            typed = room_type_counts.get(room_name, {})
+            typed_top = sorted(typed.items(), key=lambda it: it[1], reverse=True)[:4]
+            room_details.append(
+                {
+                    "room": room_name,
+                    "count": count,
+                    "types": [{"name": t_name, "count": t_count} for t_name, t_count in typed_top],
+                    "samples": room_previews.get(room_name, [])[:3],
+                }
+            )
+
+        room_links_map: Dict[str, int] = {}
+        if timeline_points:
+            ordered = sorted(timeline_points, key=lambda it: it.get("timestamp", ""))
+            for idx in range(len(ordered) - 1):
+                left = ordered[idx].get("room", "")
+                right = ordered[idx + 1].get("room", "")
+                if not left or not right or left == right:
+                    continue
+                key = "|".join(sorted([left, right]))
+                room_links_map[key] = room_links_map.get(key, 0) + 1
+
+        room_links: List[Dict[str, Any]] = []
+        for key, weight in sorted(room_links_map.items(), key=lambda it: it[1], reverse=True)[:32]:
+            source, target = key.split("|", 1)
+            room_links.append({"source": source, "target": target, "weight": weight})
 
         avg_conf = (confidence_sum / confidence_count) if confidence_count else 0.0
         noise_ratio = (short_entries / sampled) if sampled else 0.0
@@ -281,4 +327,6 @@ class MemoryAgent:
             "by_room": [{"name": k, "count": v} for k, v in room_top],
             "by_type": [{"name": k, "count": v} for k, v in type_top],
             "by_wing": [{"name": k, "count": v} for k, v in wing_top],
+            "room_details": room_details,
+            "room_links": room_links,
         }

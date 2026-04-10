@@ -15,7 +15,7 @@ import AuthLock from './components/AuthLock';
 import KasaWindow from './components/KasaWindow';
 import PrinterWindow from './components/PrinterWindow';
 import SettingsWindow from './components/SettingsWindow';
-import LeftToolView, { SystemCheckMatrix } from './components/LeftToolView';
+import LeftToolView, { SystemCheckMatrix, MemoryQualityMatrix } from './components/LeftToolView';
 
 
 
@@ -83,6 +83,7 @@ function App() {
     const [quotaModels, setQuotaModels] = useState({});
     const [isQuotaChecking, setIsQuotaChecking] = useState(false);
     const [leftPanelView, setLeftPanelView] = useState(null);
+    const [selectedMemoryRoomFilter, setSelectedMemoryRoomFilter] = useState(null);
 
 
     // RESTORED STATE
@@ -635,6 +636,10 @@ function App() {
         socket.on('left_panel_view', (data) => {
             const payload = data || null;
 
+            if (!payload || payload.type !== 'memory_quality') {
+                setSelectedMemoryRoomFilter(null);
+            }
+
             // For non-stock payloads we keep current immediate behavior.
             if (!payload || payload.type !== 'stock') {
                 stockViewQueueRef.current = [];
@@ -1020,6 +1025,7 @@ function App() {
         }
         stockViewQueueRef.current = [];
         stockViewActiveRef.current = false;
+        setSelectedMemoryRoomFilter(null);
         setLeftPanelView({ type: 'clear', title: 'Detail View' });
     };
 
@@ -1701,6 +1707,8 @@ function App() {
     // Calculate Average Audio Amplitude for Background Pulse
     const audioAmp = aiAudioData.reduce((a, b) => a + b, 0) / aiAudioData.length / 255;
     const showSystemMatrixOverlay = leftPanelView?.type === 'system_check';
+    const showMemoryMatrixOverlay = leftPanelView?.type === 'memory_quality';
+    const showCenterMatrixOverlay = showSystemMatrixOverlay || showMemoryMatrixOverlay;
 
     const toggleKasaWindow = () => {
         if (!showKasaWindow) {
@@ -1850,7 +1858,14 @@ function App() {
                 >
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10"></div>
                     <div className="relative z-20 w-full h-full">
-                        <LeftToolView payload={leftPanelView} onClear={handleClearDetailView} variant={showSystemMatrixOverlay ? 'system-no-mesh' : 'default'} />
+                        <LeftToolView
+                            payload={leftPanelView}
+                            onClear={handleClearDetailView}
+                            variant={showSystemMatrixOverlay ? 'system-no-mesh' : (showMemoryMatrixOverlay ? 'memory-no-mesh' : 'default')}
+                            selectedRoomFilter={selectedMemoryRoomFilter}
+                            onRoomSelect={setSelectedMemoryRoomFilter}
+                            onClearRoomFilter={() => setSelectedMemoryRoomFilter(null)}
+                        />
                     </div>
                 </div>
 
@@ -1872,19 +1887,30 @@ function App() {
                 >
                     <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 pointer-events-none mix-blend-overlay z-10"></div>
                     <div className="relative z-20 w-full h-full">
-                        {!showSystemMatrixOverlay && (
+                        {!showCenterMatrixOverlay && (
                             <Visualizer
                                 audioData={aiAudioData}
                                 isListening={isConnected && !isMuted}
                                 intensity={audioAmp}
                                 width={elementSizes.visualizer.w}
                                 height={elementSizes.visualizer.h}
-                                showLogo={!showSystemMatrixOverlay}
+                                showLogo={!showCenterMatrixOverlay}
                             />
                         )}
                         {showSystemMatrixOverlay && (
                             <div className="absolute inset-4 z-30 pointer-events-auto">
                                 <SystemCheckMatrix payload={leftPanelView} variant="hero" />
+                            </div>
+                        )}
+                        {showMemoryMatrixOverlay && (
+                            <div className="absolute inset-4 z-30 pointer-events-auto">
+                                <MemoryQualityMatrix
+                                    payload={leftPanelView}
+                                    variant="hero"
+                                    selectedRoomFilter={selectedMemoryRoomFilter}
+                                    onRoomSelect={setSelectedMemoryRoomFilter}
+                                    onClearRoomFilter={() => setSelectedMemoryRoomFilter(null)}
+                                />
                             </div>
                         )}
                     </div>

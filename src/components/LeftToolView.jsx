@@ -904,16 +904,381 @@ const SystemCheckView = ({ payload, variant = 'default', meshOnly = false, showM
     );
 };
 
-const MemoryQualityView = ({ payload }) => {
+const MemoryQualityView = ({
+    payload,
+    meshOnly = false,
+    showMesh = true,
+    selectedRoomFilter = null,
+    onRoomSelect = null,
+    onClearRoomFilter = null,
+}) => {
     const report = payload?.report || {};
     const quality = report?.quality || {};
     const policy = report?.policy_stats || {};
-    const byRoom = Array.isArray(quality?.by_room) ? quality.by_room : [];
+
+    const byWing = Array.isArray(quality?.by_wing) ? quality.by_wing : [];
     const byType = Array.isArray(quality?.by_type) ? quality.by_type : [];
+    const roomDetails = Array.isArray(quality?.room_details) ? quality.room_details : [];
+    const roomLinks = Array.isArray(quality?.room_links) ? quality.room_links : [];
+
+    const [meshLayer, setMeshLayer] = useState('rooms');
+    const [zoom, setZoom] = useState(meshOnly ? 1.08 : 1.0);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [isPanning, setIsPanning] = useState(false);
+    const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
 
     const avgConfidence = Number.isFinite(Number(quality?.avg_confidence)) ? Number(quality.avg_confidence) : 0;
     const noiseRatio = Number.isFinite(Number(quality?.noise_ratio)) ? Number(quality.noise_ratio) : 0;
     const duplicateRatio = Number.isFinite(Number(quality?.duplicate_ratio)) ? Number(quality.duplicate_ratio) : 0;
+    const sampledEntries = Number.isFinite(Number(quality?.sampled_entries)) ? Number(quality.sampled_entries) : 0;
+
+    const healthScore = Math.max(
+        0,
+        Math.min(1, avgConfidence - (noiseRatio * 0.55) - (duplicateRatio * 0.65))
+    );
+
+    const healthLabel = healthScore >= 0.75
+        ? 'Excellent'
+        : healthScore >= 0.55
+            ? 'Stable'
+            : healthScore >= 0.35
+                ? 'Needs tuning'
+                : 'Critical';
+
+    const healthClass = healthScore >= 0.75
+        ? 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10'
+        : healthScore >= 0.55
+            ? 'text-cyan-200 border-cyan-500/40 bg-cyan-500/10'
+            : healthScore >= 0.35
+                ? 'text-amber-300 border-amber-500/40 bg-amber-500/10'
+                : 'text-red-300 border-red-500/40 bg-red-500/10';
+
+    const baseNodes = useMemo(() => {
+        if (meshLayer === 'wings') {
+            const wingNodes = byWing.slice(0, 10).map((item) => ({
+                id: `wing-${item?.name || 'unknown'}`,
+                label: String(item?.name || 'wing'),
+                room: null,
+                count: Number(item?.count || 0),
+                types: [],
+                samples: [],
+                kind: 'wing',
+            }));
+            return wingNodes.length ? wingNodes : [{ id: 'wing-fallback', label: report?.current_wing || 'default', room: null, count: sampledEntries || 1, types: [], samples: [], kind: 'wing' }];
+        }
+
+        if (meshLayer === 'types') {
+            const typeNodes = byType.slice(0, 12).map((item) => ({
+                id: `type-${item?.name || 'unknown'}`,
+                label: String(item?.name || 'type'),
+                room: null,
+                count: Number(item?.count || 0),
+                types: [{ name: String(item?.name || 'type'), count: Number(item?.count || 0) }],
+                samples: [],
+                kind: 'type',
+            }));
+            return typeNodes.length ? typeNodes : [{ id: 'type-fallback', label: 'note', room: null, count: sampledEntries || 1, types: [{ name: 'note', count: sampledEntries || 1 }], samples: [], kind: 'type' }];
+        }
+
+        const roomNodes = roomDetails.slice(0, 14).map((item) => ({
+            id: `room-${item?.room || 'unknown'}`,
+            label: String(item?.room || 'room'),
+            room: String(item?.room || 'room'),
+            count: Number(item?.count || 0),
+            types: Array.isArray(item?.types) ? item.types : [],
+            samples: Array.isArray(item?.samples) ? item.samples : [],
+            kind: 'room',
+        }));
+        return roomNodes.length ? roomNodes : [{ id: 'room-fallback', label: 'general', room: 'general', count: sampledEntries || 1, types: [], samples: [], kind: 'room' }];
+    }, [meshLayer, byWing, byType, roomDetails, report?.current_wing, sampledEntries]);
+
+    const meshNodes = useMemo(() => {
+        const radiusX = meshLayer === 'wings' ? 34 : 41;
+        const radiusY = meshLayer === 'wings' ? 28 : 34;
+        return baseNodes.map((seed, idx) => {
+            const angle = (-Math.PI / 2) + ((idx / baseNodes.length) * Math.PI * 2);
+            return {
+                ...seed,
+                x: 50 + (Math.cos(angle) * radiusX),
+                y: 50 + (Math.sin(angle) * radiusY),
+                delay: idx * 0.12,
+            };
+        });
+    }, [baseNodes, meshLayer]);
+
+    const ringLinks = useMemo(() => meshNodes.map((node, idx) => ({
+        id: `${node.id}-ring-${idx}`,
+        from: node,
+        to: meshNodes[(idx + 1) % meshNodes.length],
+    })), [meshNodes]);
+
+    const graphLinks = useMemo(() => {
+        if (meshLayer === 'rooms') {
+            const roomMap = new Map(meshNodes.map((node) => [node.room, node]));
+            return roomLinks
+                .map((link, idx) => {
+                    const from = roomMap.get(String(link?.source || ''));
+                    const to = roomMap.get(String(link?.target || ''));
+                    if (!from || !to) return null;
+                    return {
+                        id: `room-link-${idx}-${from.id}-${to.id}`,
+                        from,
+                        to,
+                        weight: Number(link?.weight || 1),
+                    };
+                })
+                .filter(Boolean)
+                .slice(0, 32);
+        }
+
+        if (meshLayer === 'types') {
+            const pairMap = {};
+            roomDetails.forEach((room) => {
+                const types = (Array.isArray(room?.types) ? room.types : []).map((t) => String(t?.name || '')).filter(Boolean);
+                for (let i = 0; i < types.length; i++) {
+                    for (let j = i + 1; j < types.length; j++) {
+                        const key = [types[i], types[j]].sort().join('|');
+                        pairMap[key] = (pairMap[key] || 0) + 1;
+                    }
+                }
+            });
+            const nodeMap = new Map(meshNodes.map((node) => [node.label, node]));
+            return Object.entries(pairMap)
+                .sort((a, b) => b[1] - a[1])
+                .map(([key, weight], idx) => {
+                    const [left, right] = key.split('|');
+                    const from = nodeMap.get(left);
+                    const to = nodeMap.get(right);
+                    if (!from || !to) return null;
+                    return {
+                        id: `type-link-${idx}-${from.id}-${to.id}`,
+                        from,
+                        to,
+                        weight,
+                    };
+                })
+                .filter(Boolean)
+                .slice(0, 28);
+        }
+
+        return [];
+    }, [meshLayer, meshNodes, roomLinks, roomDetails]);
+
+    const nodeClass = (node) => {
+        if (node.kind === 'wing') return 'text-blue-200 border-blue-500/40 bg-blue-500/12';
+        if (node.kind === 'type') return 'text-amber-300 border-amber-500/40 bg-amber-500/12';
+
+        const topType = String(node?.types?.[0]?.name || '').toLowerCase();
+        if (topType.includes('decision')) return 'text-emerald-300 border-emerald-500/40 bg-emerald-500/12';
+        if (topType.includes('task')) return 'text-amber-300 border-amber-500/40 bg-amber-500/12';
+        if (topType.includes('preference')) return 'text-fuchsia-300 border-fuchsia-500/40 bg-fuchsia-500/12';
+        if (topType.includes('fact')) return 'text-cyan-200 border-cyan-500/40 bg-cyan-500/12';
+        return 'text-cyan-100 border-cyan-700/40 bg-cyan-500/10';
+    };
+
+    const handleWheel = (event) => {
+        event.preventDefault();
+        const delta = event.deltaY > 0 ? -0.08 : 0.08;
+        setZoom((prev) => Math.max(0.7, Math.min(2.2, prev + delta)));
+    };
+
+    const handlePanStart = (event) => {
+        setIsPanning(true);
+        panStartRef.current = {
+            x: event.clientX,
+            y: event.clientY,
+            panX: pan.x,
+            panY: pan.y,
+        };
+    };
+
+    const handlePanMove = (event) => {
+        if (!isPanning) return;
+        const dx = event.clientX - panStartRef.current.x;
+        const dy = event.clientY - panStartRef.current.y;
+        setPan({ x: panStartRef.current.panX + dx, y: panStartRef.current.panY + dy });
+    };
+
+    const handlePanEnd = () => {
+        setIsPanning(false);
+    };
+
+    const activeRoomDetail = selectedRoomFilter
+        ? roomDetails.find((item) => String(item?.room || '') === String(selectedRoomFilter)) || null
+        : null;
+
+    const displayRoomRows = activeRoomDetail ? [activeRoomDetail] : roomDetails.slice(0, 14);
+    const displayTypeRows = activeRoomDetail
+        ? (Array.isArray(activeRoomDetail?.types) ? activeRoomDetail.types : [])
+        : byType;
+
+    const meshSection = (
+        <div className="px-3 py-3 border-b border-cyan-900/30 bg-gradient-to-b from-cyan-950/20 to-black/25 overflow-hidden">
+            <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-cyan-300 text-[11px] uppercase tracking-wider font-semibold">Memory Mesh</div>
+                <span className={`text-[10px] px-2 py-0.5 rounded border ${healthClass}`}>Health: {healthLabel}</span>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex gap-1">
+                    {['wings', 'rooms', 'types'].map((layer) => {
+                        const active = meshLayer === layer;
+                        return (
+                            <button
+                                key={layer}
+                                onClick={() => setMeshLayer(layer)}
+                                className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border transition-colors ${active ? 'border-cyan-400 bg-cyan-900/25 text-cyan-200' : 'border-cyan-900/50 bg-black/30 text-cyan-500/80 hover:border-cyan-700/70'}`}
+                            >
+                                {layer}
+                            </button>
+                        );
+                    })}
+                </div>
+                <button
+                    onClick={() => {
+                        setZoom(meshOnly ? 1.08 : 1.0);
+                        setPan({ x: 0, y: 0 });
+                    }}
+                    className="text-[10px] uppercase tracking-wider px-2 py-1 rounded border border-cyan-900/50 bg-black/30 text-cyan-400/85 hover:border-cyan-700/70"
+                >
+                    reset view
+                </button>
+            </div>
+
+            <div
+                className={`relative h-64 rounded-xl border border-cyan-900/40 bg-black/40 overflow-hidden animate-shimmer-border ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+                onWheel={handleWheel}
+                onMouseDown={handlePanStart}
+                onMouseMove={handlePanMove}
+                onMouseUp={handlePanEnd}
+                onMouseLeave={handlePanEnd}
+            >
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(34,211,238,0.12),transparent_44%),radial-gradient(circle_at_78%_72%,rgba(251,191,36,0.1),transparent_42%)]" />
+
+                <div
+                    className="absolute inset-0 transition-transform duration-75"
+                    style={{
+                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                        transformOrigin: '50% 50%',
+                    }}
+                >
+                    <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Memory Quality Mesh">
+                        {ringLinks.map((link, idx) => (
+                            <line
+                                key={link.id}
+                                x1={link.from.x}
+                                y1={link.from.y}
+                                x2={link.to.x}
+                                y2={link.to.y}
+                                className="stroke-cyan-500/22 animate-data-flow"
+                                strokeWidth="0.22"
+                                strokeDasharray="1.7 1.4"
+                                style={{ animationDelay: `${idx * 0.08}s` }}
+                            />
+                        ))}
+
+                        {graphLinks.map((link, idx) => (
+                            <line
+                                key={link.id}
+                                x1={link.from.x}
+                                y1={link.from.y}
+                                x2={link.to.x}
+                                y2={link.to.y}
+                                className="stroke-cyan-400/42 animate-data-flow"
+                                strokeWidth={Math.min(0.18 + (Number(link.weight || 1) * 0.08), 0.85)}
+                                strokeDasharray="2.2 1.3"
+                                style={{ animationDelay: `${idx * 0.06}s` }}
+                            />
+                        ))}
+
+                        {meshNodes.map((node, idx) => (
+                            <line
+                                key={`${node.id}-core`}
+                                x1="50"
+                                y1="50"
+                                x2={node.x}
+                                y2={node.y}
+                                className="stroke-cyan-500/18 animate-data-flow"
+                                strokeWidth="0.28"
+                                strokeDasharray="1.6 1.2"
+                                style={{ animationDelay: `${idx * 0.11}s` }}
+                            />
+                        ))}
+                    </svg>
+
+                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                        <div className="relative w-14 h-14 rounded-full flex items-center justify-center">
+                            <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" aria-hidden="true">
+                                <circle cx="50" cy="50" r="44" fill="rgba(34,211,238,0.08)" stroke="rgba(103,232,249,0.65)" strokeWidth="4" />
+                                <circle cx="50" cy="50" r="31" fill="none" stroke="rgba(34,211,238,0.45)" strokeWidth="2" />
+                            </svg>
+                            <div className="absolute inset-0 rounded-full animate-node-pulse" />
+                            <Brain size={18} className="text-cyan-100 relative z-10" />
+                        </div>
+                    </div>
+
+                    {meshNodes.map((node) => {
+                        const isSelectedRoom = node.kind === 'room' && selectedRoomFilter && node.room === selectedRoomFilter;
+                        return (
+                            <div
+                                key={node.id}
+                                className="absolute z-20"
+                                style={{
+                                    left: `${node.x}%`,
+                                    top: `${node.y}%`,
+                                    transform: 'translate(-50%, -50%)',
+                                }}
+                            >
+                                <div className="relative group animate-float-node" style={{ animationDelay: `${node.delay}s` }}>
+                                    <button
+                                        type="button"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (node.kind === 'room' && onRoomSelect) {
+                                                onRoomSelect(node.room);
+                                            }
+                                        }}
+                                        className={`w-10 h-10 rounded-full border backdrop-blur flex items-center justify-center ${nodeClass(node)} ${isSelectedRoom ? 'ring-2 ring-white/70' : ''}`}
+                                        title={node.label}
+                                    >
+                                        <span className="text-[10px] font-semibold">{Math.min(node.count, 99)}</span>
+                                    </button>
+                                    <div className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded border border-cyan-700/40 bg-black/85 px-2 py-1 text-[10px] text-cyan-200 opacity-0 transition-opacity duration-200 group-hover:opacity-100 max-w-[240px] overflow-hidden text-ellipsis">
+                                        <div className="font-semibold">{node.label}</div>
+                                        {node.types.slice(0, 2).map((t) => (
+                                            <div key={`${node.id}-${t?.name}`} className="text-cyan-300/80">{t?.name}: {t?.count}</div>
+                                        ))}
+                                        {node.samples?.[0] && <div className="text-cyan-500/80 mt-0.5">{node.samples[0]}</div>}
+                                        {node.kind === 'room' && <div className="text-[9px] text-cyan-400/70 mt-0.5">click to filter left panel</div>}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]">
+                <div className="border border-cyan-800/40 rounded px-2 py-1 bg-black/30 text-cyan-200/85">
+                    Confidence {(avgConfidence * 100).toFixed(1)}%
+                </div>
+                <div className="border border-amber-700/40 rounded px-2 py-1 bg-black/30 text-amber-200/85">
+                    Noise {(noiseRatio * 100).toFixed(1)}%
+                </div>
+                <div className="border border-red-700/40 rounded px-2 py-1 bg-black/30 text-red-200/85">
+                    Dupes {(duplicateRatio * 100).toFixed(1)}%
+                </div>
+            </div>
+        </div>
+    );
+
+    if (meshOnly) {
+        return (
+            <div className="h-full w-full p-3">
+                {meshSection}
+            </div>
+        );
+    }
 
     return (
         <div className="h-full w-full flex flex-col overflow-hidden">
@@ -922,7 +1287,24 @@ const MemoryQualityView = ({ payload }) => {
                 <div className="text-cyan-100/75 text-xs mt-1">Project: {report?.current_project || '-'}</div>
                 <div className="text-cyan-100/75 text-xs">Wing: {report?.current_wing || '-'}</div>
                 {report?.message && <div className="text-[11px] text-cyan-300/80 mt-1">{report.message}</div>}
+                {selectedRoomFilter && (
+                    <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[10px] px-2 py-0.5 rounded border border-cyan-500/40 bg-cyan-500/10 text-cyan-200">
+                            Room filter: {selectedRoomFilter}
+                        </span>
+                        {onClearRoomFilter && (
+                            <button
+                                onClick={onClearRoomFilter}
+                                className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border border-cyan-900/50 bg-black/30 text-cyan-300 hover:border-cyan-700/70"
+                            >
+                                clear filter
+                            </button>
+                        )}
+                    </div>
+                )}
             </div>
+
+            {showMesh && meshSection}
 
             <div className="px-3 py-2 border-b border-cyan-900/30 bg-black/20 grid grid-cols-2 gap-2 text-[11px]">
                 <div className="border border-cyan-700/40 rounded p-2 text-cyan-100">Total: {report?.total_entries ?? 0}</div>
@@ -945,20 +1327,31 @@ const MemoryQualityView = ({ payload }) => {
                 </div>
 
                 <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
-                    <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Top Rooms</div>
-                    {byRoom.length === 0 && <div className="text-[11px] text-cyan-400/70">No room data.</div>}
-                    {byRoom.map((item) => (
-                        <div key={`room-${item?.name}`} className="flex items-center justify-between text-[11px] text-cyan-100/90 py-0.5">
-                            <span>{item?.name || 'unknown'}</span>
-                            <span>{item?.count ?? 0}</span>
+                    <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Rooms</div>
+                    {displayRoomRows.length === 0 && <div className="text-[11px] text-cyan-400/70">No room data.</div>}
+                    {displayRoomRows.map((item) => (
+                        <div key={`room-${item?.room}`} className="py-1 border-b border-cyan-900/25 last:border-b-0">
+                            <div className="flex items-center justify-between text-[11px] text-cyan-100/90">
+                                <span>{item?.room || 'unknown'}</span>
+                                <span>{item?.count ?? 0}</span>
+                            </div>
+                            {Array.isArray(item?.types) && item.types.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                    {item.types.slice(0, 3).map((t) => (
+                                        <span key={`${item?.room}-${t?.name}`} className="text-[10px] px-1.5 py-0.5 rounded border border-cyan-800/40 bg-black/30 text-cyan-300/85">
+                                            {t?.name}: {t?.count}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>
 
                 <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
-                    <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Top Memory Types</div>
-                    {byType.length === 0 && <div className="text-[11px] text-cyan-400/70">No type data.</div>}
-                    {byType.map((item) => (
+                    <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Memory Types</div>
+                    {displayTypeRows.length === 0 && <div className="text-[11px] text-cyan-400/70">No type data.</div>}
+                    {displayTypeRows.map((item) => (
                         <div key={`type-${item?.name}`} className="flex items-center justify-between text-[11px] text-cyan-100/90 py-0.5">
                             <span>{item?.name || 'unknown'}</span>
                             <span>{item?.count ?? 0}</span>
@@ -970,7 +1363,14 @@ const MemoryQualityView = ({ payload }) => {
     );
 };
 
-const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
+const LeftToolView = ({
+    payload,
+    onClear,
+    variant = 'default',
+    selectedRoomFilter = null,
+    onRoomSelect = null,
+    onClearRoomFilter = null,
+}) => {
     const [fadeKey, setFadeKey] = useState(0);
     const isEmpty = !payload?.type || payload.type === 'clear';
 
@@ -1004,7 +1404,20 @@ const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
         const isSystemNoMesh = variant === 'system-no-mesh';
         content = <SystemCheckView payload={payload} variant={isSystemHero ? 'hero' : 'default'} meshOnly={isSystemHero} showMesh={!isSystemNoMesh} />;
     }
-    if (payload?.type === 'memory_quality') content = <MemoryQualityView payload={payload} />;
+    if (payload?.type === 'memory_quality') {
+        const isMemoryHero = variant === 'memory-hero';
+        const isMemoryNoMesh = variant === 'memory-no-mesh';
+        content = (
+            <MemoryQualityView
+                payload={payload}
+                meshOnly={isMemoryHero}
+                showMesh={!isMemoryNoMesh}
+                selectedRoomFilter={selectedRoomFilter}
+                onRoomSelect={onRoomSelect}
+                onClearRoomFilter={onClearRoomFilter}
+            />
+        );
+    }
     if (payload?.type === 'clear') content = <EmptyState />;
 
     return (
@@ -1037,4 +1450,20 @@ const LeftToolView = ({ payload, onClear, variant = 'default' }) => {
 export default LeftToolView;
 export const SystemCheckMatrix = ({ payload, variant = 'hero' }) => (
     <SystemCheckView payload={payload} variant={variant} meshOnly />
+);
+export const MemoryQualityMatrix = ({
+    payload,
+    variant = 'hero',
+    selectedRoomFilter = null,
+    onRoomSelect = null,
+    onClearRoomFilter = null,
+}) => (
+    <MemoryQualityView
+        payload={payload}
+        meshOnly
+        showMesh={variant !== 'no-mesh'}
+        selectedRoomFilter={selectedRoomFilter}
+        onRoomSelect={onRoomSelect}
+        onClearRoomFilter={onClearRoomFilter}
+    />
 );
