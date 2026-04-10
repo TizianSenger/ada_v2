@@ -2,10 +2,11 @@ const { app, BrowserWindow, ipcMain, Notification } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 
-// Use ANGLE D3D11 backend - more stable on Windows while keeping WebGL working
-// This fixes "GPU state invalid after WaitForGetOffsetInRange" error
-app.commandLine.appendSwitch('use-angle', 'd3d11');
-app.commandLine.appendSwitch('enable-features', 'Vulkan');
+// Stabilize rendering path on Windows to prevent frequent UI crashes caused by GPU process exits.
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+app.commandLine.appendSwitch('disable-gpu-compositing');
+app.commandLine.appendSwitch('disable-features', 'Vulkan');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 let mainWindow;
@@ -442,6 +443,18 @@ function createWindow() {
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
+
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+        console.error(`[Electron] Main renderer gone: reason=${details?.reason || 'unknown'} code=${details?.exitCode ?? 'n/a'}`);
+        if (isAppShuttingDown) return;
+        try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.reload();
+            }
+        } catch (err) {
+            console.error(`[Electron] Failed to reload renderer: ${err.message}`);
+        }
+    });
 }
 
 function startPythonBackend() {
@@ -520,6 +533,12 @@ app.whenReady().then(() => {
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+
+    app.on('child-process-gone', (_event, details) => {
+        if (details?.type === 'GPU') {
+            console.error(`[Electron] GPU process gone: reason=${details.reason || 'unknown'} code=${details.exitCode ?? 'n/a'}`);
+        }
     });
 });
 

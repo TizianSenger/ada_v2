@@ -128,6 +128,8 @@ const FILE_PROJECT_TOOL_IDS = [
 ];
 const MEMORY_TOOL_IDS = ['search_memory', 'save_to_memory', 'memory_status', 'show_memory_quality_view'];
 const DATETIME_TOOL_IDS = ['get_current_datetime'];
+const CAD_TOOL_IDS = ['generate_cad', 'iterate_cad'];
+const WEB_AGENT_TOOL_IDS = ['run_web_agent', 'show_last_web_result'];
 const CALENDAR_MAIL_TOOL_IDS = [
     'connect_google_workspace',
     'list_calendar_events',
@@ -1191,6 +1193,8 @@ const SettingsWindow = ({
         const fileProjectToolsEnabled = areToolsEnabled(FILE_PROJECT_TOOL_IDS);
         const memoryToolsEnabled = areToolsEnabled(MEMORY_TOOL_IDS);
         const dateTimeToolEnabled = areToolsEnabled(DATETIME_TOOL_IDS);
+        const cadToolsEnabled = areToolsEnabled(CAD_TOOL_IDS);
+        const webAgentToolsEnabled = areToolsEnabled(WEB_AGENT_TOOL_IDS);
         const calendarMailToolsEnabled = areToolsEnabled(CALENDAR_MAIL_TOOL_IDS);
         const systemCheckEnabled = toolEnabled.system_check !== false;
 
@@ -1242,6 +1246,16 @@ const SettingsWindow = ({
                         label="DateTime Tool"
                         enabled={dateTimeToolEnabled}
                         onToggle={() => setToolGroupEnabled(DATETIME_TOOL_IDS, !dateTimeToolEnabled)}
+                    />
+                    <ToggleRow
+                        label="CAD Prototype Tools"
+                        enabled={cadToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(CAD_TOOL_IDS, !cadToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="Web Agent Tools"
+                        enabled={webAgentToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(WEB_AGENT_TOOL_IDS, !webAgentToolsEnabled)}
                     />
                     <ToggleRow
                         label="Calendar + Mail Tools (all)"

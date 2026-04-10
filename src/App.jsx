@@ -183,6 +183,8 @@ function App() {
     const leftPanelViewRef = useRef(null);
     const smartHomeToolsEnabledRef = useRef(true);
     const printerToolsEnabledRef = useRef(true);
+    const cadToolsEnabledRef = useRef(true);
+    const webAgentToolsEnabledRef = useRef(true);
     const whatsappToolsEnabledRef = useRef(true);
     const whatsappMonitorEnabledRef = useRef(false);
     const whatsappUnreadRef = useRef(0);
@@ -391,6 +393,12 @@ function App() {
         isToolEnabled('discover_printers') ||
         isToolEnabled('print_stl') ||
         isToolEnabled('get_print_status');
+    const isCadToolsEnabled =
+        isToolEnabled('generate_cad') ||
+        isToolEnabled('iterate_cad');
+    const isWebAgentToolsEnabled =
+        isToolEnabled('run_web_agent') ||
+        isToolEnabled('show_last_web_result');
 
     useEffect(() => {
         whatsappToolsEnabledRef.current = isWhatsAppToolsEnabled;
@@ -416,6 +424,23 @@ function App() {
             setSlicingStatus({ active: false, percent: 0, message: '' });
         }
     }, [isPrinterToolsEnabled]);
+
+    useEffect(() => {
+        cadToolsEnabledRef.current = isCadToolsEnabled;
+        if (!isCadToolsEnabled) {
+            setShowCadWindow(false);
+            setCadData(null);
+            setCadThoughts('');
+        }
+    }, [isCadToolsEnabled]);
+
+    useEffect(() => {
+        webAgentToolsEnabledRef.current = isWebAgentToolsEnabled;
+        if (!isWebAgentToolsEnabled) {
+            setShowBrowserWindow(false);
+            setBrowserData({ image: null, logs: [] });
+        }
+    }, [isWebAgentToolsEnabled]);
 
     // Auto-Connect Model on Start (Only after Auth and devices loaded)
     useEffect(() => {
@@ -550,6 +575,9 @@ function App() {
             });
         });
         socket.on('cad_data', (data) => {
+            if (!cadToolsEnabledRef.current) {
+                return;
+            }
             console.log("Received CAD Data:", data);
             setCadData(data);
             setCadThoughts(''); // Clear thoughts when generation complete
@@ -565,6 +593,9 @@ function App() {
             }
         });
         socket.on('cad_status', (data) => {
+            if (!cadToolsEnabledRef.current) {
+                return;
+            }
             console.log("Received CAD Status:", data);
             // Extract retry info from extended payload
             if (data.attempt) {
@@ -595,10 +626,16 @@ function App() {
             }
         });
         socket.on('cad_thought', (data) => {
+            if (!cadToolsEnabledRef.current) {
+                return;
+            }
             // Append streaming thought text
             setCadThoughts(prev => prev + data.text);
         });
         socket.on('browser_frame', (data) => {
+            if (!webAgentToolsEnabledRef.current) {
+                return;
+            }
             setBrowserData(prev => ({
                 image: data.image,
                 logs: [...prev.logs, data.log].filter(l => l).slice(-50) // Keep last 50 logs
@@ -1829,6 +1866,22 @@ function App() {
         setShowPrinterWindow(!showPrinterWindow);
     };
 
+    const toggleCadWindow = () => {
+        if (!isCadToolsEnabled) {
+            setShowCadWindow(false);
+            return;
+        }
+        setShowCadWindow(!showCadWindow);
+    };
+
+    const toggleBrowserWindow = () => {
+        if (!isWebAgentToolsEnabled) {
+            setShowBrowserWindow(false);
+            return;
+        }
+        setShowBrowserWindow(!showBrowserWindow);
+    };
+
     const detailViewTop = elementPositions.visualizer.y - (elementSizes.visualizer.h / 2);
     const chatBottom = elementPositions.chat.y + elementSizes.chat.h;
     const detailViewHeight = Math.max(320, chatBottom - detailViewTop);
@@ -2083,7 +2136,7 @@ function App() {
                 )}
 
                 {/* CAD Window Overlay - Moved outside of Video so it can show independently */}
-                {showCadWindow && (
+                {isCadToolsEnabled && showCadWindow && (
                     <div
                         id="cad"
                         className={`absolute flex flex-col transition-all duration-200 
@@ -2129,7 +2182,7 @@ function App() {
 
 
                 {/* Browser Window Overlay */}
-                {showBrowserWindow && (
+                {isWebAgentToolsEnabled && showBrowserWindow && (
                     <div
                         id="browser"
                         className={`absolute flex flex-col transition-all duration-200 
@@ -2193,10 +2246,12 @@ function App() {
                         onTogglePrinter={togglePrinterWindow}
                         showPrinterWindow={showPrinterWindow}
                         showPrinterControl={isPrinterToolsEnabled}
-                        onToggleCad={() => setShowCadWindow(!showCadWindow)}
+                        onToggleCad={toggleCadWindow}
                         showCadWindow={showCadWindow}
-                        onToggleBrowser={() => setShowBrowserWindow(!showBrowserWindow)}
+                        showCadControl={isCadToolsEnabled}
+                        onToggleBrowser={toggleBrowserWindow}
                         showBrowserWindow={showBrowserWindow}
+                        showBrowserControl={isWebAgentToolsEnabled}
                         onToggleQuota={() => setShowQuotaWindow(!showQuotaWindow)}
                         showQuotaWindow={showQuotaWindow}
                         quotaState={quotaInfo.level}

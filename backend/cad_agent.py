@@ -83,6 +83,20 @@ export_stl(result_part, 'output.stl')
 ```
 """
 
+    def _candidate_models(self):
+        primary = str(self.model or "").strip()
+        models = [primary] if primary else []
+        # Fallback order: keep quality first, then prioritize availability.
+        for m in ["gemini-2.5-pro", "gemini-2.5-flash"]:
+            if m not in models:
+                models.append(m)
+        return models
+
+    @staticmethod
+    def _is_quota_error(exc: Exception) -> bool:
+        text = str(exc or "").lower()
+        return ("429" in text) or ("resource_exhausted" in text) or ("quota" in text)
+
     async def generate_prototype(self, prompt: str, output_dir: Optional[str] = None):
         """
         Generates 3D geometry by asking Gemini for a script, then running it LOCALLY.
@@ -124,27 +138,50 @@ export_stl(result_part, 'output.stl')
                 
                 # 1. Ask Gemini for the code with streaming and thinking
                 raw_content = ""
-                stream = await self.client.aio.models.generate_content_stream(
-                    model=self.model,
-                    contents=current_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=self.system_instruction,
-                        temperature=1.0,
-                        thinking_config=types.ThinkingConfig(include_thoughts=True)
-                    )
-                )
-                async for chunk in stream:
-                    if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                        for part in chunk.candidates[0].content.parts:
-                            if not part.text:
-                                continue
-                            elif part.thought:
-                                # Stream thought to callback
-                                if self.on_thought:
-                                    self.on_thought(part.text)
-                            else:
-                                # Accumulate answer text
-                                raw_content += part.text
+                last_stream_error = None
+                for model_name in self._candidate_models():
+                    try:
+                        print(f"[CadAgent DEBUG] [MODEL] Trying model: {model_name}")
+                        stream = await self.client.aio.models.generate_content_stream(
+                            model=model_name,
+                            contents=current_prompt,
+                            config=types.GenerateContentConfig(
+                                system_instruction=self.system_instruction,
+                                temperature=1.0,
+                                thinking_config=types.ThinkingConfig(include_thoughts=True)
+                            )
+                        )
+                        async for chunk in stream:
+                            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+                                for part in chunk.candidates[0].content.parts:
+                                    if not part.text:
+                                        continue
+                                    elif part.thought:
+                                        # Stream thought to callback
+                                        if self.on_thought:
+                                            self.on_thought(part.text)
+                                    else:
+                                        # Accumulate answer text
+                                        raw_content += part.text
+                        if raw_content:
+                            break
+                    except Exception as stream_err:
+                        last_stream_error = stream_err
+                        if self._is_quota_error(stream_err):
+                            print(f"[CadAgent DEBUG] [WARN] Quota on model '{model_name}', trying fallback...")
+                            continue
+                        raise
+
+                if not raw_content and last_stream_error is not None and self._is_quota_error(last_stream_error):
+                    print(f"[CadAgent DEBUG] [ERR] All CAD models quota-limited: {last_stream_error}")
+                    if self.on_status:
+                        self.on_status({
+                            "status": "failed",
+                            "attempt": attempt + 1,
+                            "max_attempts": max_retries,
+                            "error": "Gemini quota exceeded for all CAD fallback models"
+                        })
+                    return None
                 
                 if not raw_content:
                     print("[CadAgent DEBUG] [ERR] Empty response from model.")
@@ -340,27 +377,50 @@ Ensure you still export to 'output.stl'.
                 
                 # 1. Ask Gemini for the code with streaming and thinking
                 raw_content = ""
-                stream = await self.client.aio.models.generate_content_stream(
-                    model=self.model,
-                    contents=current_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=self.system_instruction,
-                        temperature=1.0,
-                        thinking_config=types.ThinkingConfig(include_thoughts=True)
-                    )
-                )
-                async for chunk in stream:
-                    if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                        for part in chunk.candidates[0].content.parts:
-                            if not part.text:
-                                continue
-                            elif part.thought:
-                                # Stream thought to callback
-                                if self.on_thought:
-                                    self.on_thought(part.text)
-                            else:
-                                # Accumulate answer text
-                                raw_content += part.text
+                last_stream_error = None
+                for model_name in self._candidate_models():
+                    try:
+                        print(f"[CadAgent DEBUG] [MODEL] Trying model: {model_name}")
+                        stream = await self.client.aio.models.generate_content_stream(
+                            model=model_name,
+                            contents=current_prompt,
+                            config=types.GenerateContentConfig(
+                                system_instruction=self.system_instruction,
+                                temperature=1.0,
+                                thinking_config=types.ThinkingConfig(include_thoughts=True)
+                            )
+                        )
+                        async for chunk in stream:
+                            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+                                for part in chunk.candidates[0].content.parts:
+                                    if not part.text:
+                                        continue
+                                    elif part.thought:
+                                        # Stream thought to callback
+                                        if self.on_thought:
+                                            self.on_thought(part.text)
+                                    else:
+                                        # Accumulate answer text
+                                        raw_content += part.text
+                        if raw_content:
+                            break
+                    except Exception as stream_err:
+                        last_stream_error = stream_err
+                        if self._is_quota_error(stream_err):
+                            print(f"[CadAgent DEBUG] [WARN] Quota on model '{model_name}', trying fallback...")
+                            continue
+                        raise
+
+                if not raw_content and last_stream_error is not None and self._is_quota_error(last_stream_error):
+                    print(f"[CadAgent DEBUG] [ERR] All CAD models quota-limited: {last_stream_error}")
+                    if self.on_status:
+                        self.on_status({
+                            "status": "failed",
+                            "attempt": attempt + 1,
+                            "max_attempts": max_retries,
+                            "error": "Gemini quota exceeded for all CAD fallback models"
+                        })
+                    return None
                 
                 if not raw_content:
                     print("[CadAgent DEBUG] [ERR] Empty response from model.")

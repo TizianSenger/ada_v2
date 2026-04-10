@@ -21,8 +21,10 @@ const ToolsModule = ({
     showPrinterControl = true,
     onToggleCad,
     showCadWindow,
+    showCadControl = true,
     onToggleBrowser,
     showBrowserWindow,
+    showBrowserControl = true,
     onToggleQuota,
     showQuotaWindow,
     quotaState,
@@ -132,26 +134,30 @@ const ToolsModule = ({
                 )}
 
                 {/* CAD Agent Toggle */}
-                <button
-                    onClick={onToggleCad}
-                    className={`p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ${showCadWindow
-                        ? 'border-cyan-400 bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 shadow-[0_0_15px_rgba(34,211,238,0.3)]'
-                        : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
-                        } `}
-                >
-                    <Box size={24} />
-                </button>
+                {showCadControl && (
+                    <button
+                        onClick={onToggleCad}
+                        className={`p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ${showCadWindow
+                            ? 'border-cyan-400 bg-cyan-400/10 text-cyan-400 hover:bg-cyan-400/20 shadow-[0_0_15px_rgba(34,211,238,0.3)]'
+                            : 'border-cyan-900 text-cyan-700 hover:border-cyan-500 hover:text-cyan-500'
+                            } `}
+                    >
+                        <Box size={24} />
+                    </button>
+                )}
 
                 {/* Web Agent Toggle */}
-                <button
-                    onClick={onToggleBrowser}
-                    className={`p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ${showBrowserWindow
-                        ? 'border-blue-400 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
-                        : 'border-cyan-900 text-cyan-700 hover:border-blue-500 hover:text-blue-500'
-                        } `}
-                >
-                    <Globe size={24} />
-                </button>
+                {showBrowserControl && (
+                    <button
+                        onClick={onToggleBrowser}
+                        className={`p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ${showBrowserWindow
+                            ? 'border-blue-400 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 shadow-[0_0_15px_rgba(96,165,250,0.3)]'
+                            : 'border-cyan-900 text-cyan-700 hover:border-blue-500 hover:text-blue-500'
+                            } `}
+                    >
+                        <Globe size={24} />
+                    </button>
+                )}
 
                 {/* Quota Status */}
                 <button
