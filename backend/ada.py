@@ -1574,12 +1574,20 @@ class AudioLoop:
                         if response.server_content.input_transcription:
                             transcript = response.server_content.input_transcription.text
                             if transcript:
+                                if self.chat_buffer["sender"] != "User":
+                                    if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
+                                        self.flush_chat()
+                                    # Start user transcription fresh to avoid cross-turn delta corruption.
+                                    self._last_input_transcription = ""
+
                                 # Skip if this is an exact duplicate event
                                 if transcript != self._last_input_transcription:
+                                    previous = self._last_input_transcription
+                                    is_prefix_update = transcript.startswith(previous)
                                     # Calculate delta (Gemini may send cumulative or chunk-based text)
                                     delta = transcript
-                                    if transcript.startswith(self._last_input_transcription):
-                                        delta = transcript[len(self._last_input_transcription):]
+                                    if is_prefix_update:
+                                        delta = transcript[len(previous):]
                                     self._last_input_transcription = transcript
                                     
                                     # Only send if there's new text
@@ -1589,46 +1597,56 @@ class AudioLoop:
 
                                         # Send to frontend (Streaming)
                                         if self.on_transcription:
-                                             self.on_transcription({"sender": "User", "text": delta})
+                                            self.on_transcription({"sender": "User", "text": delta})
                                         
                                         # Buffer for Logging
                                         if self.chat_buffer["sender"] != "User":
-                                            # Flush previous if exists
-                                            if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
-                                                self.project_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
-                                            # Start new
-                                            self.chat_buffer = {"sender": "User", "text": delta}
+                                            # Start a new user buffer with the latest full transcript.
+                                            self.chat_buffer = {"sender": "User", "text": transcript}
                                         else:
-                                            # Append
-                                            self.chat_buffer["text"] += delta
+                                            if is_prefix_update:
+                                                # Append only truly incremental chunks.
+                                                self.chat_buffer["text"] += delta
+                                            else:
+                                                # Transcript revision from model: replace current text.
+                                                self.chat_buffer["text"] = transcript
                         
                         if response.server_content.output_transcription:
                             transcript = response.server_content.output_transcription.text
                             if transcript:
+                                if self.chat_buffer["sender"] != "ADA":
+                                    if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
+                                        self.flush_chat()
+                                    # Start assistant transcription fresh to avoid cross-turn delta corruption.
+                                    self._last_output_transcription = ""
+
                                 # Skip if this is an exact duplicate event
                                 if transcript != self._last_output_transcription:
+                                    previous = self._last_output_transcription
+                                    is_prefix_update = transcript.startswith(previous)
                                     # Calculate delta (Gemini may send cumulative or chunk-based text)
                                     delta = transcript
-                                    if transcript.startswith(self._last_output_transcription):
-                                        delta = transcript[len(self._last_output_transcription):]
+                                    if is_prefix_update:
+                                        delta = transcript[len(previous):]
                                     self._last_output_transcription = transcript
                                     
                                     # Only send if there's new text
                                     if delta:
                                         # Send to frontend (Streaming)
                                         if self.on_transcription:
-                                             self.on_transcription({"sender": "ADA", "text": delta})
+                                            self.on_transcription({"sender": "ADA", "text": delta})
                                         
                                         # Buffer for Logging
                                         if self.chat_buffer["sender"] != "ADA":
-                                            # Flush previous
-                                            if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
-                                                self.project_manager.log_chat(self.chat_buffer["sender"], self.chat_buffer["text"])
-                                            # Start new
-                                            self.chat_buffer = {"sender": "ADA", "text": delta}
+                                            # Start a new assistant buffer with the latest full transcript.
+                                            self.chat_buffer = {"sender": "ADA", "text": transcript}
                                         else:
-                                            # Append
-                                            self.chat_buffer["text"] += delta
+                                            if is_prefix_update:
+                                                # Append only truly incremental chunks.
+                                                self.chat_buffer["text"] += delta
+                                            else:
+                                                # Transcript revision from model: replace current text.
+                                                self.chat_buffer["text"] = transcript
                         
                         # Flush buffer on turn completion if needed, 
                         # but usually better to wait for sender switch or explicit end.

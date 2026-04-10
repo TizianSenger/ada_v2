@@ -19,7 +19,6 @@ import hashlib
 import hmac
 import base64
 import uuid
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -483,32 +482,11 @@ async def start_audio(sid, data=None):
              await sio.emit('status', {'msg': 'A.D.A Already Running'})
              return
 
-
-    audio_emit_state = {
-        "last_ts": 0.0,
-        "pending": False,
-    }
-
     # Callback to send audio data to frontend
     def on_audio_data(data_bytes):
-        # Throttle + downsample to prevent socket/event-loop flooding.
-        now = time.monotonic()
-        if now - audio_emit_state["last_ts"] < 0.05:
-            return
-        if audio_emit_state["pending"]:
-            return
-
-        audio_emit_state["last_ts"] = now
-        audio_emit_state["pending"] = True
-        sampled = list(data_bytes[::4])
-
-        async def _emit_audio():
-            try:
-                await sio.emit('audio_data', {'data': sampled})
-            finally:
-                audio_emit_state["pending"] = False
-
-        asyncio.create_task(_emit_audio())
+        # We need to schedule this on the event loop
+        # This is high frequency, so we might want to downsample or batch if it's too much
+        asyncio.create_task(sio.emit('audio_data', {'data': list(data_bytes)}))
 
     # Callback to send CAL data to frontend
     def on_cad_data(data):
