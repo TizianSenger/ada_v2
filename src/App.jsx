@@ -23,6 +23,16 @@ const socket = io('http://localhost:8000');
 const { ipcRenderer } = window.require('electron');
 const STOCK_VIEW_QUEUE_MAX = 3;
 const STOCK_VIEW_INTERVAL_MS = 1800;
+const CURSOR_UI_UPDATE_MS = 80;
+const AI_AUDIO_UI_UPDATE_MS = 40;
+const SNAP_TARGET_SCAN_MS = 250;
+const VIDEO_FRAME_INTERVAL_MS = 160;
+const VIDEO_PREVIEW_WIDTH = 640;
+const VIDEO_PREVIEW_HEIGHT = 360;
+const VIDEO_RENDER_INTERVAL_MS = 33;
+const HAND_DETECTION_INTERVAL_MS = 120;
+const HAND_DETECTION_WIDTH = 320;
+const HAND_DETECTION_HEIGHT = 180;
 
 function App() {
     const [status, setStatus] = useState('Disconnected');
@@ -89,7 +99,6 @@ function App() {
 
     // RESTORED STATE
     const [aiAudioData, setAiAudioData] = useState(new Array(64).fill(0));
-    const [micAudioData, setMicAudioData] = useState(new Array(32).fill(0));
     const [fps, setFps] = useState(0);
 
     // Device states - microphones, speakers, webcams
@@ -154,20 +163,18 @@ function App() {
     const cursorTrailRef = useRef([]); // Stores last N positions for trail
     const [ripples, setRipples] = useState([]); // Visual ripples on click
 
-    // Web Audio Context for Mic Visualization
-    const audioContextRef = useRef(null);
-    const analyserRef = useRef(null);
-    const sourceRef = useRef(null);
-    const animationFrameRef = useRef(null);
-
     // Video Refs
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
     const transmissionCanvasRef = useRef(null); // Dedicated canvas for resizing payload
-    const videoIntervalRef = useRef(null);
     const lastFrameTimeRef = useRef(0);
     const frameCountRef = useRef(0);
     const lastVideoTimeRef = useRef(-1);
+    const lastVideoEmitAtRef = useRef(0);
+    const videoEncodePendingRef = useRef(false);
+    const lastVideoRenderAtRef = useRef(0);
+    const lastHandDetectionAtRef = useRef(0);
+    const handDetectionCanvasRef = useRef(null);
 
     // Ref to track video state for the loop (avoids closure staleness)
     const isVideoOnRef = useRef(false);
@@ -203,6 +210,11 @@ function App() {
     // Mouse Drag Refs
     const dragOffsetRef = useRef({ x: 0, y: 0 });
     const isDraggingRef = useRef(false);
+    const lastAiAudioUiUpdateAtRef = useRef(0);
+    const lastCursorUiUpdateAtRef = useRef(0);
+    const lastPinchingRef = useRef(false);
+    const snapTargetsRef = useRef([]);
+    const lastSnapScanAtRef = useRef(0);
 
     // Update refs when state changes
     useEffect(() => {
@@ -496,7 +508,11 @@ function App() {
             }
         });
         socket.on('audio_data', (data) => {
-            setAiAudioData(data.data);
+            const now = performance.now();
+            if (now - lastAiAudioUiUpdateAtRef.current >= AI_AUDIO_UI_UPDATE_MS) {
+                setAiAudioData(data.data);
+                lastAiAudioUiUpdateAtRef.current = now;
+            }
         });
         socket.on('auth_status', (data) => {
             console.log("Auth Status:", data);
@@ -1026,7 +1042,6 @@ function App() {
             stockViewQueueRef.current = [];
             stockViewActiveRef.current = false;
 
-            stopMicVisualizer();
             stopVideo();
         };
     }, []);
@@ -1119,41 +1134,6 @@ function App() {
         }
     }, [selectedWebcamId]);
 
-    // Start/Stop Mic Visualizer
-    useEffect(() => {
-        if (selectedMicId) {
-            startMicVisualizer(selectedMicId);
-        }
-    }, [selectedMicId]);
-
-    const startMicVisualizer = async (deviceId) => {
-        stopMicVisualizer();
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: { deviceId: { exact: deviceId } }
-            });
-
-            audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-            analyserRef.current = audioContextRef.current.createAnalyser();
-            analyserRef.current.fftSize = 64;
-
-            sourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
-            sourceRef.current.connect(analyserRef.current);
-
-            const updateMicData = () => {
-                if (!analyserRef.current) return;
-                const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-                analyserRef.current.getByteFrequencyData(dataArray);
-                setMicAudioData(Array.from(dataArray));
-                animationFrameRef.current = requestAnimationFrame(updateMicData);
-            };
-
-            updateMicData();
-        } catch (err) {
-            console.error("Error accessing microphone:", err);
-        }
-    };
-
     const handleClearDetailView = () => {
         if (stockViewTimerRef.current) {
             clearTimeout(stockViewTimerRef.current);
@@ -1165,20 +1145,15 @@ function App() {
         setLeftPanelView({ type: 'clear', title: 'Detail View' });
     };
 
-    const stopMicVisualizer = () => {
-        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-        if (sourceRef.current) sourceRef.current.disconnect();
-        if (audioContextRef.current) audioContextRef.current.close();
-    };
-
     const startVideo = async () => {
         try {
-            // Request 1080p resolution with selected webcam
+            // Use lower preview resolution to keep UI thread responsive.
             const constraints = {
                 video: {
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    aspectRatio: 16 / 9
+                    width: { ideal: VIDEO_PREVIEW_WIDTH, max: VIDEO_PREVIEW_WIDTH },
+                    height: { ideal: VIDEO_PREVIEW_HEIGHT, max: VIDEO_PREVIEW_HEIGHT },
+                    frameRate: { ideal: 24, max: 30 },
+                    aspectRatio: 16 / 9,
                 }
             };
 
@@ -1196,13 +1171,28 @@ function App() {
             // Initialize the transmission canvas
             if (!transmissionCanvasRef.current) {
                 transmissionCanvasRef.current = document.createElement('canvas');
-                transmissionCanvasRef.current.width = 640;
-                transmissionCanvasRef.current.height = 360;
-                console.log("Initialized transmission canvas (640x360)");
+                transmissionCanvasRef.current.width = VIDEO_PREVIEW_WIDTH;
+                transmissionCanvasRef.current.height = VIDEO_PREVIEW_HEIGHT;
+                console.log(`Initialized transmission canvas (${VIDEO_PREVIEW_WIDTH}x${VIDEO_PREVIEW_HEIGHT})`);
+            }
+
+            if (!handDetectionCanvasRef.current) {
+                handDetectionCanvasRef.current = document.createElement('canvas');
+                handDetectionCanvasRef.current.width = HAND_DETECTION_WIDTH;
+                handDetectionCanvasRef.current.height = HAND_DETECTION_HEIGHT;
+            }
+
+            if (canvasRef.current) {
+                canvasRef.current.width = VIDEO_PREVIEW_WIDTH;
+                canvasRef.current.height = VIDEO_PREVIEW_HEIGHT;
             }
 
             setIsVideoOn(true);
             isVideoOnRef.current = true; // Update ref for loop
+            lastVideoEmitAtRef.current = 0;
+            videoEncodePendingRef.current = false;
+            lastVideoRenderAtRef.current = 0;
+            lastHandDetectionAtRef.current = 0;
 
             console.log("Starting video loop with webcam:", selectedWebcamId || "default");
             requestAnimationFrame(predictWebcam);
@@ -1225,13 +1215,20 @@ function App() {
             return;
         }
 
-        // 1. Draw Video to Local Display Canvas (Native Resolution)
+        const loopNow = performance.now();
+        if (loopNow - lastVideoRenderAtRef.current < VIDEO_RENDER_INTERVAL_MS) {
+            requestAnimationFrame(predictWebcam);
+            return;
+        }
+        lastVideoRenderAtRef.current = loopNow;
+
+        // 1. Draw Video to Local Display Canvas
         const ctx = canvasRef.current.getContext('2d');
 
-        // Ensure canvas matches video dimensions
-        if (canvasRef.current.width !== videoRef.current.videoWidth || canvasRef.current.height !== videoRef.current.videoHeight) {
-            canvasRef.current.width = videoRef.current.videoWidth;
-            canvasRef.current.height = videoRef.current.videoHeight;
+        // Keep a bounded canvas size to reduce draw cost.
+        if (canvasRef.current.width !== VIDEO_PREVIEW_WIDTH || canvasRef.current.height !== VIDEO_PREVIEW_HEIGHT) {
+            canvasRef.current.width = VIDEO_PREVIEW_WIDTH;
+            canvasRef.current.height = VIDEO_PREVIEW_HEIGHT;
         }
 
         ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
@@ -1239,22 +1236,26 @@ function App() {
         // 2. Send Frame to Backend (Throttled & Resized)
         // Only send if connected
         if (isConnected) {
-            // Simple throttle: every 5th frame roughly
-            if (frameCountRef.current % 5 === 0) {
+            const now = performance.now();
+            const shouldEmitFrame =
+                now - lastVideoEmitAtRef.current >= VIDEO_FRAME_INTERVAL_MS &&
+                !videoEncodePendingRef.current;
 
-                // Use dedicated transmission canvas for resizing
+            if (shouldEmitFrame) {
+                // Use dedicated transmission canvas for resizing.
                 const transCanvas = transmissionCanvasRef.current;
                 if (transCanvas) {
                     const transCtx = transCanvas.getContext('2d');
-                    // Draw resized image
                     transCtx.drawImage(videoRef.current, 0, 0, transCanvas.width, transCanvas.height);
 
-                    // Convert resized image to blob
+                    videoEncodePendingRef.current = true;
                     transCanvas.toBlob((blob) => {
                         if (blob) {
                             socket.emit('video_frame', { image: blob });
+                            lastVideoEmitAtRef.current = performance.now();
                         }
-                    }, 'image/jpeg', 0.6); // Slightly higher compression for speed
+                        videoEncodePendingRef.current = false;
+                    }, 'image/jpeg', 0.6);
                 }
             }
         }
@@ -1263,22 +1264,28 @@ function App() {
         // 3. Hand Tracking
         let startTimeMs = performance.now();
         // Use Ref for toggle check
-        if (isHandTrackingEnabledRef.current && handLandmarkerRef.current && videoRef.current.currentTime !== lastVideoTimeRef.current) {
-            lastVideoTimeRef.current = videoRef.current.currentTime;
-            const results = handLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
+        const shouldRunHandDetection =
+            isHandTrackingEnabledRef.current &&
+            handLandmarkerRef.current &&
+            videoRef.current.currentTime !== lastVideoTimeRef.current &&
+            startTimeMs - lastHandDetectionAtRef.current >= HAND_DETECTION_INTERVAL_MS;
 
-            // Log every 100 frames to confirm loop is running
-            if (frameCountRef.current % 100 === 0) {
-                console.log("Tracking loop running... Last result:", results.landmarks.length > 0 ? "Hand Found" : "No Hand");
+        if (shouldRunHandDetection) {
+            lastVideoTimeRef.current = videoRef.current.currentTime;
+            lastHandDetectionAtRef.current = startTimeMs;
+
+            const handCanvas = handDetectionCanvasRef.current;
+            if (!handCanvas) {
+                requestAnimationFrame(predictWebcam);
+                return;
             }
+            const handCtx = handCanvas.getContext('2d');
+            handCtx.drawImage(videoRef.current, 0, 0, handCanvas.width, handCanvas.height);
+
+            const results = handLandmarkerRef.current.detectForVideo(handCanvas, startTimeMs);
 
             if (results.landmarks && results.landmarks.length > 0) {
                 const landmarks = results.landmarks[0];
-
-                // Log on first detection
-                if (cursorPos.x === 0 && cursorPos.y === 0) {
-                    console.log("First hand detection!", landmarks);
-                }
 
                 // Index Finger Tip (8)
                 const indexTip = landmarks[8];
@@ -1341,8 +1348,13 @@ function App() {
                     }
                 } else {
                     // Check if we should snap
-                    // Find all interactive elements
-                    const targets = Array.from(document.querySelectorAll('button, input, select, .draggable'));
+                    // Scan the DOM at a lower cadence to avoid expensive per-frame queries.
+                    const now = performance.now();
+                    if (now - lastSnapScanAtRef.current >= SNAP_TARGET_SCAN_MS) {
+                        snapTargetsRef.current = Array.from(document.querySelectorAll('button, input, select, .draggable'));
+                        lastSnapScanAtRef.current = now;
+                    }
+                    const targets = snapTargetsRef.current;
                     let closest = null;
                     let minDist = Infinity;
 
@@ -1377,7 +1389,11 @@ function App() {
                 }
 
                 // Update Cursor Loop
-                setCursorPos({ x: finalX, y: finalY });
+                const now = performance.now();
+                if (now - lastCursorUiUpdateAtRef.current >= CURSOR_UI_UPDATE_MS) {
+                    setCursorPos({ x: finalX, y: finalY });
+                    lastCursorUiUpdateAtRef.current = now;
+                }
 
                 // Trail Logic: Removed per user request
 
@@ -1387,10 +1403,8 @@ function App() {
                 );
 
                 const isPinchNow = distance < 0.05; // Threshold
-                if (isPinchNow && !isPinching) {
+                if (isPinchNow && !lastPinchingRef.current) {
                     // Click Triggered
-                    console.log("Click triggered at", finalX, finalY);
-
                     // Ripple Effect: Removed per user request
 
                     const el = document.elementFromPoint(finalX, finalY);
@@ -1404,7 +1418,10 @@ function App() {
                         }
                     }
                 }
-                setIsPinching(isPinchNow);
+                if (isPinchNow !== lastPinchingRef.current) {
+                    setIsPinching(isPinchNow);
+                    lastPinchingRef.current = isPinchNow;
+                }
 
                 // Fist Detection for Gesture-Based Dragging (Popup Windows Only)
                 // Detects if all fingers are folded (tips closer to wrist than MCPs)
@@ -1517,6 +1534,9 @@ function App() {
         }
         setIsVideoOn(false);
         isVideoOnRef.current = false; // Update ref
+        videoEncodePendingRef.current = false;
+        lastVideoRenderAtRef.current = 0;
+        lastHandDetectionAtRef.current = 0;
         setFps(0);
     };
 
@@ -1980,7 +2000,7 @@ function App() {
 
                 {/* Top Visualizer (User Mic) */}
                 <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px] flex justify-center">
-                    <TopAudioBar audioData={micAudioData} />
+                    <TopAudioBar selectedMicId={selectedMicId} />
                 </div>
 
                 <div className="relative z-10 flex items-center gap-2 pr-2" style={{ WebkitAppRegion: 'no-drag' }}>

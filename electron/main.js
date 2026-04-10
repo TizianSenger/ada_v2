@@ -2,12 +2,17 @@ const { app, BrowserWindow, ipcMain, Notification } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 
-// Stabilize rendering path on Windows to prevent frequent UI crashes caused by GPU process exits.
-app.disableHardwareAcceleration();
-app.commandLine.appendSwitch('disable-gpu');
-app.commandLine.appendSwitch('disable-gpu-compositing');
-app.commandLine.appendSwitch('disable-features', 'Vulkan');
-app.commandLine.appendSwitch('ignore-gpu-blocklist');
+// Use hardware acceleration by default for smooth UI.
+// Fallback to software rendering only when explicitly requested.
+const forceSoftwareRendering = process.env.ADA_FORCE_SOFTWARE_RENDERING === '1';
+if (forceSoftwareRendering) {
+    app.disableHardwareAcceleration();
+    app.commandLine.appendSwitch('disable-gpu');
+    app.commandLine.appendSwitch('disable-gpu-compositing');
+    app.commandLine.appendSwitch('disable-features', 'Vulkan');
+    app.commandLine.appendSwitch('ignore-gpu-blocklist');
+    console.warn('[ADA] Running in software rendering mode (ADA_FORCE_SOFTWARE_RENDERING=1).');
+}
 
 let mainWindow;
 let pythonProcess;
