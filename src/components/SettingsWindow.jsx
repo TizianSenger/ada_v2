@@ -113,6 +113,8 @@ const TOOL_GROUPS = {
     ],
 };
 
+const PRINTER_TOOL_IDS = ['discover_printers', 'print_stl', 'get_print_status'];
+
 const TAB_BUTTON = 'px-3 py-1.5 text-xs rounded-md border transition-colors';
 const VOICE_OPTIONS = ['Kore', 'Orus', 'Fenrir', 'Charon', 'Puck', 'Aoede'];
 
@@ -390,6 +392,16 @@ const SettingsWindow = ({
 
         // Send update
         socket.emit('update_settings', { tool_permissions: { [toolId]: nextVal } });
+    };
+
+    const areToolsEnabled = (ids) => ids.some((id) => permissions[id] !== false);
+
+    const setToolGroupEnabled = (ids, enabled) => {
+        const payload = ids.reduce((acc, id) => {
+            acc[id] = enabled;
+            return acc;
+        }, {});
+        socket.emit('update_settings', { tool_permissions: payload });
     };
 
     const toggleFaceAuth = () => {
@@ -1124,9 +1136,19 @@ const SettingsWindow = ({
 
     const renderToolsTab = () => {
         const selectedGroup = groupedTools.find((g) => g.group === activeToolGroup) || groupedTools[0];
+        const printerToolsEnabled = areToolsEnabled(PRINTER_TOOL_IDS);
 
         return (
             <div className="space-y-4">
+                <div className="border border-cyan-900/40 rounded-lg p-3 bg-black/25">
+                    <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold mb-2">Quick Toggles</div>
+                    <ToggleRow
+                        label="Printer Tools (all)"
+                        enabled={printerToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(PRINTER_TOOL_IDS, !printerToolsEnabled)}
+                    />
+                </div>
+
                 <div className="flex flex-wrap gap-2">
                     {groupedTools.map((group) => {
                         const active = activeToolGroup === group.group;

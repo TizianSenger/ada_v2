@@ -17,6 +17,7 @@ const ToolsModule = ({
     showKasaWindow,
     onTogglePrinter,
     showPrinterWindow,
+    showPrinterControl = true,
     onToggleCad,
     showCadWindow,
     onToggleBrowser,
@@ -115,15 +116,17 @@ const ToolsModule = ({
                 </button>
 
                 {/* 3D Printer Control */}
-                <button
-                    onClick={onTogglePrinter}
-                    className={`p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ${showPrinterWindow
-                        ? 'border-green-400 bg-green-400/10 text-green-400 hover:bg-green-400/20'
-                        : 'border-cyan-900 text-cyan-700 hover:border-green-500 hover:text-green-500'
-                        } `}
-                >
-                    <Printer size={24} />
-                </button>
+                {showPrinterControl && (
+                    <button
+                        onClick={onTogglePrinter}
+                        className={`p-3 rounded-full border-2 transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 ${showPrinterWindow
+                            ? 'border-green-400 bg-green-400/10 text-green-400 hover:bg-green-400/20'
+                            : 'border-cyan-900 text-cyan-700 hover:border-green-500 hover:text-green-500'
+                            } `}
+                    >
+                        <Printer size={24} />
+                    </button>
+                )}
 
                 {/* CAD Agent Toggle */}
                 <button

@@ -48,6 +48,7 @@ function App() {
     const [showLockButton, setShowLockButton] = useState(true);
     const [whatsappMonitorEnabled, setWhatsappMonitorEnabled] = useState(false);
     const [whatsappNotifyEnabled, setWhatsappNotifyEnabled] = useState(true);
+    const [toolPermissions, setToolPermissions] = useState({});
 
 
     const [isConnected, setIsConnected] = useState(true); // Power state DEFAULT ON
@@ -180,6 +181,7 @@ function App() {
     const stockViewTimerRef = useRef(null);
     const stockViewActiveRef = useRef(false);
     const leftPanelViewRef = useRef(null);
+    const printerToolsEnabledRef = useRef(true);
     const whatsappMonitorEnabledRef = useRef(false);
     const whatsappUnreadRef = useRef(0);
     const whatsappDataRef = useRef({
@@ -376,6 +378,22 @@ function App() {
         socket.emit('check_quotas');
     };
 
+    const isToolEnabled = (toolName) => toolPermissions?.[toolName] !== false;
+    const isPrinterToolsEnabled =
+        isToolEnabled('discover_printers') ||
+        isToolEnabled('print_stl') ||
+        isToolEnabled('get_print_status');
+
+    useEffect(() => {
+        printerToolsEnabledRef.current = isPrinterToolsEnabled;
+        if (!isPrinterToolsEnabled) {
+            setShowPrinterWindow(false);
+            setPrinterCount(0);
+            setActivePrintStatus(null);
+            setSlicingStatus({ active: false, percent: 0, message: '' });
+        }
+    }, [isPrinterToolsEnabled]);
+
     // Auto-Connect Model on Start (Only after Auth and devices loaded)
     useEffect(() => {
         // Only auto-connect once: when socket connected, authenticated, and devices loaded
@@ -384,7 +402,9 @@ function App() {
 
             // Trigger Kasa and Printer Discovery
             socket.emit('discover_home');
-            socket.emit('discover_printers');
+            if (isPrinterToolsEnabled) {
+                socket.emit('discover_printers');
+            }
 
             // Connect to model with small delay for socket stability
             const timer = setTimeout(() => {
@@ -401,7 +421,7 @@ function App() {
                 });
             }, 500);
         }
-    }, [isConnected, isAuthenticated, socketConnected, micDevices, selectedMicId]);
+    }, [isConnected, isAuthenticated, socketConnected, micDevices, selectedMicId, isPrinterToolsEnabled]);
 
     useEffect(() => {
         // Socket IO Setup
@@ -472,6 +492,9 @@ function App() {
             }
             if (typeof settings.whatsapp_notify_enabled !== 'undefined') {
                 setWhatsappNotifyEnabled(Boolean(settings.whatsapp_notify_enabled));
+            }
+            if (settings && settings.tool_permissions && typeof settings.tool_permissions === 'object') {
+                setToolPermissions(settings.tool_permissions);
             }
         });
         socket.on('error', (data) => {
@@ -598,6 +621,9 @@ function App() {
 
         // Handle Print Window Request (from CadWindow)
         socket.on('request_print_window', () => {
+            if (!printerToolsEnabledRef.current) {
+                return;
+            }
             setShowPrinterWindow(true);
             const size = { w: 380, h: 380 };
             const clamped = clampToViewport({ x: window.innerWidth / 2, y: window.innerHeight / 2 }, size);
@@ -759,12 +785,20 @@ function App() {
 
         // Track printer count for toolbar display
         socket.on('printer_list', (list) => {
+            if (!printerToolsEnabledRef.current) {
+                setPrinterCount(0);
+                return;
+            }
             console.log('[PRINTERS] Count:', list.length);
             setPrinterCount(list.length);
         });
 
         // Slicing progress for top toolbar
         socket.on('slicing_progress', (data) => {
+            if (!printerToolsEnabledRef.current) {
+                setSlicingStatus({ active: false, percent: 0, message: '' });
+                return;
+            }
             console.log('[SLICING] Progress:', data);
             setSlicingStatus({
                 active: data.percent < 100,
@@ -775,6 +809,10 @@ function App() {
 
         // Print status for top toolbar - track active prints
         socket.on('print_status_update', (data) => {
+            if (!printerToolsEnabledRef.current) {
+                setActivePrintStatus(null);
+                return;
+            }
             console.log('[PRINT STATUS]', data);
             // Only show in toolbar if actively printing
             if (data.state && data.state.toLowerCase().includes('print')) {
@@ -1719,6 +1757,10 @@ function App() {
     };
 
     const togglePrinterWindow = () => {
+        if (!isPrinterToolsEnabled) {
+            setShowPrinterWindow(false);
+            return;
+        }
         setShowPrinterWindow(!showPrinterWindow);
     };
 
@@ -1803,7 +1845,7 @@ function App() {
                         </div>
                     )}
                     {/* Connected Printers Count */}
-                    {printerCount > 0 && (
+                    {isPrinterToolsEnabled && printerCount > 0 && (
                         <div className="flex items-center gap-1.5 text-[10px] text-green-400 border border-green-500/30 bg-green-500/10 px-2 py-0.5 rounded ml-2">
                             <Printer size={10} className="text-green-400" />
                             <span>{printerCount} Printer{printerCount !== 1 ? 's' : ''}</span>
@@ -2083,6 +2125,7 @@ function App() {
                         showKasaWindow={showKasaWindow}
                         onTogglePrinter={togglePrinterWindow}
                         showPrinterWindow={showPrinterWindow}
+                        showPrinterControl={isPrinterToolsEnabled}
                         onToggleCad={() => setShowCadWindow(!showCadWindow)}
                         showCadWindow={showCadWindow}
                         onToggleBrowser={() => setShowBrowserWindow(!showBrowserWindow)}
@@ -2197,7 +2240,7 @@ function App() {
                 )}
 
                 {/* Printer Window */}
-                {showPrinterWindow && (
+                {isPrinterToolsEnabled && showPrinterWindow && (
                     <PrinterWindow
                         socket={socket}
                         onClose={() => setShowPrinterWindow(false)}

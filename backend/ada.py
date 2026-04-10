@@ -783,6 +783,11 @@ class AudioLoop:
     async def run_system_check(self, include_network_checks=True):
         started_ts = time.time()
         checks = []
+        printer_checks_enabled = any([
+            self.permissions.get("discover_printers", True),
+            self.permissions.get("print_stl", True),
+            self.permissions.get("get_print_status", True),
+        ])
 
         planned_checks = [
             "Model Session",
@@ -793,7 +798,6 @@ class AudioLoop:
         if include_network_checks:
             planned_checks.extend([
                 "Smart Home Discovery",
-                "Printer Discovery",
                 "WhatsApp Monitor",
                 "Weather API",
                 "Stock Market API",
@@ -801,6 +805,8 @@ class AudioLoop:
                 "Google Calendar",
                 "Gmail",
             ])
+            if printer_checks_enabled:
+                planned_checks.append("Printer Discovery")
         else:
             planned_checks.append("Network Checks")
 
@@ -987,22 +993,23 @@ class AudioLoop:
             except Exception as e:
                 add_check("Smart Home Discovery", "fail", f"Discovery failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
-            # Printer discovery/status probe
-            t0 = time.time()
-            try:
-                printers = await self.printer_agent.discover_printers()
-                if printers:
-                    add_check(
-                        "Printer Discovery",
-                        "pass",
-                        f"Found {len(printers)} printer(s).",
-                        {"count": len(printers)},
-                        (time.time() - t0) * 1000,
-                    )
-                else:
-                    add_check("Printer Discovery", "warn", "No printers discovered.", duration_ms=(time.time() - t0) * 1000)
-            except Exception as e:
-                add_check("Printer Discovery", "fail", f"Printer check failed: {e}", duration_ms=(time.time() - t0) * 1000)
+            if printer_checks_enabled:
+                # Printer discovery/status probe
+                t0 = time.time()
+                try:
+                    printers = await self.printer_agent.discover_printers()
+                    if printers:
+                        add_check(
+                            "Printer Discovery",
+                            "pass",
+                            f"Found {len(printers)} printer(s).",
+                            {"count": len(printers)},
+                            (time.time() - t0) * 1000,
+                        )
+                    else:
+                        add_check("Printer Discovery", "warn", "No printers discovered.", duration_ms=(time.time() - t0) * 1000)
+                except Exception as e:
+                    add_check("Printer Discovery", "fail", f"Printer check failed: {e}", duration_ms=(time.time() - t0) * 1000)
 
             # WhatsApp monitor probe (via frontend snapshot bridge)
             t0 = time.time()
