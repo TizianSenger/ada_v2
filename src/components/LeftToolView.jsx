@@ -14,6 +14,8 @@ import {
     Database,
     Wifi,
     Server,
+    Music,
+    Disc3,
     LineChart,
     ArrowUp,
     ArrowLeft,
@@ -106,6 +108,25 @@ const ModeHeader = ({ activeMode, toolPermissions = {} }) => {
         if (id === 'stock') {
             return isToolEnabled('search_stock_symbol') || isToolEnabled('get_stock_quote') || isToolEnabled('get_stock_news');
         }
+        if (id === 'spotify') {
+            return (
+                isToolEnabled('search_spotify') ||
+                isToolEnabled('spotify_get_auth_url') ||
+                isToolEnabled('spotify_connect_account') ||
+                isToolEnabled('spotify_get_playback_status') ||
+                isToolEnabled('spotify_list_playlists') ||
+                isToolEnabled('spotify_get_favorites') ||
+                isToolEnabled('spotify_get_daylist') ||
+                isToolEnabled('spotify_add_to_playlist') ||
+                isToolEnabled('spotify_add_to_favorites') ||
+                isToolEnabled('spotify_play') ||
+                isToolEnabled('spotify_pause') ||
+                isToolEnabled('spotify_resume') ||
+                isToolEnabled('spotify_next') ||
+                isToolEnabled('spotify_previous') ||
+                isToolEnabled('spotify_set_playback_mode')
+            );
+        }
         if (id === 'system') {
             return true;
         }
@@ -122,6 +143,7 @@ const ModeHeader = ({ activeMode, toolPermissions = {} }) => {
         { id: 'whatsapp', label: 'WhatsApp', Icon: MessageCircle },
         { id: 'route', label: 'Route', Icon: Route },
         { id: 'stock', label: 'Stock', Icon: LineChart },
+        { id: 'spotify', label: 'Spotify', Icon: Disc3 },
         { id: 'system', label: 'System', Icon: ShieldCheck },
         { id: 'memory', label: 'Memory', Icon: Brain },
     ].filter((mode) => isModeVisible(mode.id));
@@ -655,6 +677,104 @@ const StockView = ({ payload }) => {
     );
 };
 
+const SpotifyView = ({ payload }) => {
+    const spotify = payload?.spotify || {};
+    const playback = spotify?.playback || payload?.playback || {};
+    const search = spotify?.search || {};
+    const playlistsPayload = spotify?.playlists || {};
+    const favoritesPayload = spotify?.favorites || {};
+    const daylistPayload = spotify?.daylist || {};
+
+    const searchTracks = Array.isArray(search?.tracks) ? search.tracks : [];
+    const playlists = Array.isArray(playlistsPayload?.playlists) ? playlistsPayload.playlists : [];
+    const favorites = Array.isArray(favoritesPayload?.tracks) ? favoritesPayload.tracks : [];
+    const daylistTracks = Array.isArray(daylistPayload?.tracks) ? daylistPayload.tracks : [];
+
+    const hasPlayback = playback && typeof playback === 'object' && Object.keys(playback).length > 0;
+    const track = hasPlayback ? (playback.track || {}) : {};
+    const device = hasPlayback ? (playback.device || {}) : {};
+
+    return (
+        <div className="h-full w-full flex flex-col overflow-hidden">
+            <div className="px-3 py-2 border-b border-cyan-900/40 bg-black/30">
+                <div className="text-cyan-300 text-xs uppercase tracking-wider font-bold">{payload?.title || 'Spotify'}</div>
+                {hasPlayback && (
+                    <div className="text-cyan-100/80 text-xs mt-1">
+                        Status: {playback?.is_playing ? 'Playing' : 'Paused'} | Device: {device?.name || 'n/a'}
+                    </div>
+                )}
+            </div>
+
+            <div className="flex-1 overflow-auto scrollbar-hide p-3 space-y-3">
+                {hasPlayback && (
+                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Now Playing</div>
+                        <div className="text-cyan-100/90 text-sm mt-1">{track?.name || 'n/a'}</div>
+                        <div className="text-cyan-300/80 text-xs mt-1">{Array.isArray(track?.artists) ? track.artists.join(', ') : 'n/a'}</div>
+                        <div className="text-cyan-500/80 text-[11px] mt-1">Album: {track?.album || 'n/a'}</div>
+                    </div>
+                )}
+
+                {searchTracks.length > 0 && (
+                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Search Results</div>
+                        <div className="mt-2 space-y-1">
+                            {searchTracks.slice(0, 10).map((item) => (
+                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90">
+                                    {item?.name || 'Unknown'} - {Array.isArray(item?.artists) ? item.artists.join(', ') : 'n/a'}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {playlists.length > 0 && (
+                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Playlists</div>
+                        <div className="mt-2 space-y-1">
+                            {playlists.slice(0, 12).map((item) => (
+                                <div key={item?.id || item?.name} className="text-[11px] text-cyan-100/90">
+                                    {item?.name || 'Unknown'} ({item?.tracks_total ?? 0})
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {favorites.length > 0 && (
+                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Favorites</div>
+                        <div className="mt-2 space-y-1">
+                            {favorites.slice(0, 12).map((item) => (
+                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90">
+                                    {item?.name || 'Unknown'} - {Array.isArray(item?.artists) ? item.artists.join(', ') : 'n/a'}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {daylistTracks.length > 0 && (
+                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                        <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Daylist</div>
+                        <div className="mt-2 space-y-1">
+                            {daylistTracks.slice(0, 12).map((item) => (
+                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90">
+                                    {item?.name || 'Unknown'} - {Array.isArray(item?.artists) ? item.artists.join(', ') : 'n/a'}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {!hasPlayback && searchTracks.length === 0 && playlists.length === 0 && favorites.length === 0 && daylistTracks.length === 0 && (
+                    <div className="text-xs text-cyan-400/70">Keine Spotify Detaildaten vorhanden.</div>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const SystemCheckView = ({ payload, variant = 'default', meshOnly = false, showMesh = true }) => {
     const report = payload?.report || {};
     const summary = report?.summary || {};
@@ -715,6 +835,7 @@ const SystemCheckView = ({ payload, variant = 'default', meshOnly = false, showM
         if (text.includes('whatsapp')) return MessageCircle;
         if (text.includes('weather')) return CloudSun;
         if (text.includes('stock')) return LineChart;
+        if (text.includes('spotify')) return Disc3;
         if (text.includes('route')) return Route;
         if (text.includes('google calendar') || text.includes('calendar')) return CalendarDays;
         if (text.includes('gmail') || text.includes('mail')) return Mail;
@@ -1428,6 +1549,7 @@ const LeftToolView = ({
         if (payload.type === 'whatsapp') return 'whatsapp';
         if (payload.type === 'route') return 'route';
         if (payload.type === 'stock') return 'stock';
+        if (payload.type === 'spotify') return 'spotify';
         if (payload.type === 'system_check') return 'system';
         if (payload.type === 'memory_quality') return 'memory';
         return 'none';
@@ -1445,6 +1567,7 @@ const LeftToolView = ({
     if (payload?.type === 'whatsapp') content = <WhatsappView payload={payload} />;
     if (payload?.type === 'route') content = <RouteView payload={payload} />;
     if (payload?.type === 'stock') content = <StockView payload={payload} />;
+    if (payload?.type === 'spotify') content = <SpotifyView payload={payload} />;
     if (payload?.type === 'system_check') {
         const isSystemHero = variant === 'system-hero';
         const isSystemNoMesh = variant === 'system-no-mesh';

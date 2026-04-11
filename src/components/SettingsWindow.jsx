@@ -27,6 +27,21 @@ const TOOLS = [
     { id: 'search_stock_symbol', label: 'Search Stock Symbol' },
     { id: 'get_stock_quote', label: 'Get Stock Quote' },
     { id: 'get_stock_news', label: 'Get Stock News' },
+    { id: 'search_spotify', label: 'Search Spotify' },
+    { id: 'spotify_get_auth_url', label: 'Spotify Get Auth URL' },
+    { id: 'spotify_connect_account', label: 'Spotify Connect Account' },
+    { id: 'spotify_get_playback_status', label: 'Spotify Get Playback Status' },
+    { id: 'spotify_list_playlists', label: 'Spotify List Playlists' },
+    { id: 'spotify_get_favorites', label: 'Spotify Get Favorites' },
+    { id: 'spotify_get_daylist', label: 'Spotify Get Daylist' },
+    { id: 'spotify_add_to_playlist', label: 'Spotify Add To Playlist' },
+    { id: 'spotify_add_to_favorites', label: 'Spotify Add To Favorites' },
+    { id: 'spotify_play', label: 'Spotify Play' },
+    { id: 'spotify_pause', label: 'Spotify Pause' },
+    { id: 'spotify_resume', label: 'Spotify Resume' },
+    { id: 'spotify_next', label: 'Spotify Next' },
+    { id: 'spotify_previous', label: 'Spotify Previous' },
+    { id: 'spotify_set_playback_mode', label: 'Spotify Set Playback Mode' },
     { id: 'route_plan', label: 'Route Plan (Free)' },
     { id: 'get_whatsapp_unread', label: 'Get WhatsApp Unread' },
     { id: 'show_whatsapp_detail_view', label: 'Show WhatsApp Detail View' },
@@ -109,6 +124,23 @@ const TOOL_GROUPS = {
         'get_stock_quote',
         'get_stock_news',
     ],
+    Music: [
+        'search_spotify',
+        'spotify_get_auth_url',
+        'spotify_connect_account',
+        'spotify_get_playback_status',
+        'spotify_list_playlists',
+        'spotify_get_favorites',
+        'spotify_get_daylist',
+        'spotify_add_to_playlist',
+        'spotify_add_to_favorites',
+        'spotify_play',
+        'spotify_pause',
+        'spotify_resume',
+        'spotify_next',
+        'spotify_previous',
+        'spotify_set_playback_mode',
+    ],
 };
 
 const PRINTER_TOOL_IDS = ['discover_printers', 'print_stl', 'get_print_status'];
@@ -116,6 +148,23 @@ const SMART_HOME_TOOL_IDS = ['list_smart_devices', 'control_light'];
 const WHATSAPP_TOOL_IDS = ['get_whatsapp_unread', 'show_whatsapp_detail_view'];
 const WEATHER_TOOL_IDS = ['get_weather', 'get_weather_forecast', 'get_weather_full_report'];
 const STOCK_TOOL_IDS = ['search_stock_symbol', 'get_stock_quote', 'get_stock_news'];
+const SPOTIFY_TOOL_IDS = [
+    'search_spotify',
+    'spotify_get_auth_url',
+    'spotify_connect_account',
+    'spotify_get_playback_status',
+    'spotify_list_playlists',
+    'spotify_get_favorites',
+    'spotify_get_daylist',
+    'spotify_add_to_playlist',
+    'spotify_add_to_favorites',
+    'spotify_play',
+    'spotify_pause',
+    'spotify_resume',
+    'spotify_next',
+    'spotify_previous',
+    'spotify_set_playback_mode',
+];
 const ROUTE_TOOL_IDS = ['route_plan'];
 const FILE_PROJECT_TOOL_IDS = [
     'write_file',
@@ -403,6 +452,20 @@ const SettingsWindow = ({
     const [finnhubApiKeyInput, setFinnhubApiKeyInput] = useState('');
     const [finnhubApiKeyConfigured, setFinnhubApiKeyConfigured] = useState(false);
     const [finnhubApiKeyMessage, setFinnhubApiKeyMessage] = useState('');
+    const [spotifyClientId, setSpotifyClientId] = useState('');
+    const [spotifyClientSecret, setSpotifyClientSecret] = useState('');
+    const [spotifyClientSecretConfigured, setSpotifyClientSecretConfigured] = useState(false);
+    const [spotifyRedirectUri, setSpotifyRedirectUri] = useState('http://127.0.0.1:8000/spotify/callback');
+    const [spotifyScopes, setSpotifyScopes] = useState('');
+    const [spotifyAuthCodeInput, setSpotifyAuthCodeInput] = useState('');
+    const [spotifyConnectBusy, setSpotifyConnectBusy] = useState(false);
+    const [spotifyStatusMessage, setSpotifyStatusMessage] = useState('');
+    const [spotifyConnected, setSpotifyConnected] = useState(false);
+    const [spotifyConnectedUser, setSpotifyConnectedUser] = useState({});
+    const [spotifyTokenExpiresAt, setSpotifyTokenExpiresAt] = useState(0);
+    const [spotifyRefreshTokenConfigured, setSpotifyRefreshTokenConfigured] = useState(false);
+    const [spotifyAccessTokenConfigured, setSpotifyAccessTokenConfigured] = useState(false);
+    const [spotifyLastDeviceId, setSpotifyLastDeviceId] = useState('');
     const [googleConnectMessage, setGoogleConnectMessage] = useState('');
     const [googleConnecting, setGoogleConnecting] = useState(false);
     const [defaultWeatherLocation, setDefaultWeatherLocation] = useState('Berlin,DE');
@@ -428,6 +491,16 @@ const SettingsWindow = ({
     const [animatedRadarValues, setAnimatedRadarValues] = useState(PERSONALITY_DEFAULT_CUSTOM);
     const [restartBusy, setRestartBusy] = useState(false);
     const [restartSplashVisible, setRestartSplashVisible] = useState(false);
+
+    const formatUnixTs = (rawTs) => {
+        const n = Number.parseInt(rawTs, 10);
+        if (!Number.isFinite(n) || n <= 0) return 'n/a';
+        try {
+            return new Date(n * 1000).toLocaleString();
+        } catch {
+            return 'n/a';
+        }
+    };
 
     const dragRef = useRef({ active: false, offsetX: 0, offsetY: 0 });
     const faceSetupVideoRef = useRef(null);
@@ -505,6 +578,16 @@ const SettingsWindow = ({
                 }
                 setApiKeyConfigured(Boolean(settings.gemini_api_key_configured));
                 setFinnhubApiKeyConfigured(Boolean(settings.finnhub_api_key_configured));
+                setSpotifyClientId(String(settings.spotify_client_id || ''));
+                setSpotifyClientSecretConfigured(Boolean(settings.spotify_client_secret_configured));
+                setSpotifyRedirectUri(String(settings.spotify_redirect_uri || 'http://127.0.0.1:8000/spotify/callback'));
+                setSpotifyScopes(String(settings.spotify_scopes || ''));
+                setSpotifyConnected(Boolean(settings.spotify_connected));
+                setSpotifyConnectedUser(settings.spotify_connected_user && typeof settings.spotify_connected_user === 'object' ? settings.spotify_connected_user : {});
+                setSpotifyTokenExpiresAt(Number.parseInt(settings.spotify_user_token_expires_at, 10) || 0);
+                setSpotifyRefreshTokenConfigured(Boolean(settings.spotify_refresh_token_configured));
+                setSpotifyAccessTokenConfigured(Boolean(settings.spotify_user_access_token_configured));
+                setSpotifyLastDeviceId(String(settings.spotify_last_device_id || ''));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
                 setVoiceName(settings.voice_name || 'Kore');
                 setAiDisplayName(settings.ai_display_name || 'Jarvis');
@@ -522,6 +605,37 @@ const SettingsWindow = ({
             const msg = String(result?.message || '').trim() || (ok ? 'Google connected.' : 'Google connect failed.');
             setGoogleConnectMessage(msg);
             setGoogleConnecting(false);
+        };
+
+        const handleSpotifyConnectionResult = (result) => {
+            const ok = Boolean(result?.ok);
+            const msg = String(result?.message || '').trim() || (ok ? 'Spotify action completed.' : 'Spotify action failed.');
+            setSpotifyStatusMessage(msg);
+            if (!ok) {
+                setSpotifyConnectBusy(false);
+                return;
+            }
+
+            const step = String(result?.step || '').trim();
+            if (step === 'auth_url_ready') {
+                const authUrl = String(result?.auth_url || '').trim();
+                if (authUrl && !result?.opened_browser) {
+                    try {
+                        window.open(authUrl, '_blank', 'noopener,noreferrer');
+                    } catch {
+                        // ignore UI popup failures
+                    }
+                }
+                setSpotifyConnectBusy(false);
+                return;
+            }
+
+            if (step === 'connected' || step === 'disconnected') {
+                setSpotifyConnectBusy(false);
+                if (step === 'connected') {
+                    setSpotifyAuthCodeInput('');
+                }
+            }
         };
 
         const handleFaceSetupResult = (result) => {
@@ -592,6 +706,7 @@ const SettingsWindow = ({
 
         socket.on('settings', handleSettings);
         socket.on('google_workspace_connection_result', handleGoogleConnectionResult);
+        socket.on('spotify_connection_result', handleSpotifyConnectionResult);
         socket.on('face_setup_result', handleFaceSetupResult);
         socket.on('clear_long_term_memory_result', handleClearMemoryResult);
         socket.on('long_term_memory_count_result', handleMemoryCountResult);
@@ -606,6 +721,7 @@ const SettingsWindow = ({
         return () => {
             socket.off('settings', handleSettings);
             socket.off('google_workspace_connection_result', handleGoogleConnectionResult);
+            socket.off('spotify_connection_result', handleSpotifyConnectionResult);
             socket.off('face_setup_result', handleFaceSetupResult);
             socket.off('clear_long_term_memory_result', handleClearMemoryResult);
             socket.off('long_term_memory_count_result', handleMemoryCountResult);
@@ -909,6 +1025,50 @@ const SettingsWindow = ({
         setFinnhubApiKeyInput('');
         setFinnhubApiKeyConfigured(true);
         setFinnhubApiKeyMessage('Stock API key saved. Stock tools are now available.');
+    };
+
+    const saveSpotifySettings = () => {
+        const payload = {
+            spotify_client_id: String(spotifyClientId || '').trim(),
+            spotify_redirect_uri: String(spotifyRedirectUri || '').trim() || 'http://127.0.0.1:8000/spotify/callback',
+            spotify_scopes: String(spotifyScopes || '').trim(),
+        };
+
+        const secret = String(spotifyClientSecret || '').trim();
+        if (secret) {
+            payload.spotify_client_secret = secret;
+        }
+
+        socket.emit('update_settings', payload);
+        if (secret) {
+            setSpotifyClientSecret('');
+            setSpotifyClientSecretConfigured(true);
+        }
+        setSpotifyStatusMessage('Spotify settings saved.');
+    };
+
+    const startSpotifyConnect = (forceReauth = false) => {
+        setSpotifyConnectBusy(true);
+        setSpotifyStatusMessage(forceReauth ? 'Starting Spotify reconnect...' : 'Starting Spotify connect...');
+        socket.emit('spotify_start_connect', { force_reauth: forceReauth });
+    };
+
+    const completeSpotifyConnect = () => {
+        const code = String(spotifyAuthCodeInput || '').trim();
+        if (!code) {
+            setSpotifyStatusMessage('Please paste the Spotify code or full callback URL first.');
+            return;
+        }
+
+        setSpotifyConnectBusy(true);
+        setSpotifyStatusMessage('Finalizing Spotify connection...');
+        socket.emit('spotify_complete_connect', { code });
+    };
+
+    const disconnectSpotify = () => {
+        setSpotifyConnectBusy(true);
+        setSpotifyStatusMessage('Disconnecting Spotify and clearing tokens...');
+        socket.emit('spotify_disconnect');
     };
 
     const connectGoogleWorkspace = (forceReauth = false) => {
@@ -1403,6 +1563,111 @@ const SettingsWindow = ({
             </div>
 
             <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Spotify</h3>
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3 space-y-2">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <input
+                            type="text"
+                            value={spotifyClientId}
+                            onChange={(e) => setSpotifyClientId(e.target.value)}
+                            placeholder="Spotify Client ID"
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                        <input
+                            type="password"
+                            value={spotifyClientSecret}
+                            onChange={(e) => setSpotifyClientSecret(e.target.value)}
+                            placeholder={spotifyClientSecretConfigured ? 'Client Secret saved (enter new to replace)' : 'Spotify Client Secret'}
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                    </div>
+
+                    <input
+                        type="text"
+                        value={spotifyRedirectUri}
+                        onChange={(e) => setSpotifyRedirectUri(e.target.value)}
+                        placeholder="Spotify Redirect URI"
+                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                    />
+
+                    <input
+                        type="text"
+                        value={spotifyScopes}
+                        onChange={(e) => setSpotifyScopes(e.target.value)}
+                        placeholder="Spotify Scopes (optional)"
+                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                    />
+
+                    <div className="flex items-center justify-end gap-2 mt-1">
+                        <button
+                            onClick={saveSpotifySettings}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                        >
+                            Save Spotify Settings
+                        </button>
+                    </div>
+
+                    <div className="bg-black/30 border border-cyan-900/30 rounded p-2">
+                        <div className="text-[10px] text-cyan-400/80 uppercase tracking-wider mb-1">Spotify Status</div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-1 text-[11px] text-cyan-100/90">
+                            <div>Client ID: {spotifyClientId ? 'loaded' : 'not loaded'}</div>
+                            <div>Client Secret: {spotifyClientSecretConfigured ? 'loaded' : 'not loaded'}</div>
+                            <div>Refresh Token: {spotifyRefreshTokenConfigured ? 'loaded' : 'not loaded'}</div>
+                            <div>Access Token: {spotifyAccessTokenConfigured ? 'loaded' : 'not loaded'}</div>
+                            <div>Connection: {spotifyConnected ? 'connected' : 'not connected'}</div>
+                            <div>Token Expires: {formatUnixTs(spotifyTokenExpiresAt)}</div>
+                            <div>User: {spotifyConnectedUser?.display_name || spotifyConnectedUser?.id || 'n/a'}</div>
+                            <div>Last Device: {spotifyLastDeviceId || 'n/a'}</div>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => startSpotifyConnect(false)}
+                            disabled={spotifyConnectBusy}
+                            className="flex-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                        >
+                            Connect
+                        </button>
+                        <button
+                            onClick={() => startSpotifyConnect(true)}
+                            disabled={spotifyConnectBusy}
+                            className="flex-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-900/70 hover:bg-cyan-800 text-white disabled:opacity-50"
+                        >
+                            Reconnect
+                        </button>
+                    </div>
+
+                    <input
+                        type="text"
+                        value={spotifyAuthCodeInput}
+                        onChange={(e) => setSpotifyAuthCodeInput(e.target.value)}
+                        placeholder="Paste Spotify code OR full callback URL here"
+                        className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                    />
+
+                    <div className="flex gap-2">
+                        <button
+                            onClick={completeSpotifyConnect}
+                            disabled={spotifyConnectBusy}
+                            className="flex-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white disabled:opacity-50"
+                        >
+                            Complete Connection
+                        </button>
+                        <button
+                            onClick={disconnectSpotify}
+                            disabled={spotifyConnectBusy}
+                            className="flex-1 text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-red-700/75 hover:bg-red-600 text-white disabled:opacity-50"
+                        >
+                            Disconnect / Clear Tokens
+                        </button>
+                    </div>
+
+                    {spotifyStatusMessage && <p className="mt-1 text-[10px] text-cyan-300/80">{spotifyStatusMessage}</p>}
+                </div>
+            </div>
+
+            <div>
                 <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Google Workspace</h3>
                 <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3">
                     <div className="text-[10px] text-cyan-500/70 mb-2">
@@ -1840,6 +2105,7 @@ const SettingsWindow = ({
         const whatsappToolsEnabled = areToolsEnabled(WHATSAPP_TOOL_IDS);
         const weatherToolsEnabled = areToolsEnabled(WEATHER_TOOL_IDS);
         const stockToolsEnabled = areToolsEnabled(STOCK_TOOL_IDS);
+        const spotifyToolsEnabled = areToolsEnabled(SPOTIFY_TOOL_IDS);
         const routeToolsEnabled = areToolsEnabled(ROUTE_TOOL_IDS);
         const fileProjectToolsEnabled = areToolsEnabled(FILE_PROJECT_TOOL_IDS);
         const memoryToolsEnabled = areToolsEnabled(MEMORY_TOOL_IDS);
@@ -1877,6 +2143,11 @@ const SettingsWindow = ({
                         label="Stock Tools (all)"
                         enabled={stockToolsEnabled}
                         onToggle={() => setToolGroupEnabled(STOCK_TOOL_IDS, !stockToolsEnabled)}
+                    />
+                    <ToggleRow
+                        label="Spotify Tools (all)"
+                        enabled={spotifyToolsEnabled}
+                        onToggle={() => setToolGroupEnabled(SPOTIFY_TOOL_IDS, !spotifyToolsEnabled)}
                     />
                     <ToggleRow
                         label="Route Tools"

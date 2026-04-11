@@ -9,6 +9,7 @@ if sys.platform == 'win32':
 import socketio
 import uvicorn
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 import asyncio
 import threading
 import sys
@@ -19,6 +20,7 @@ import hashlib
 import hmac
 import base64
 import uuid
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +37,7 @@ from authenticator import FaceAuthenticator
 from kasa_agent import KasaAgent
 from google_calendar_integration import GoogleCalendarIntegration
 from google_gmail_integration import GoogleGmailIntegration
+from spotify_agent import SpotifyAgent
 try:
     from memory_agent import MemoryAgent
 except Exception:
@@ -111,6 +114,21 @@ DEFAULT_SETTINGS = {
         "route_plan": True,
         "get_whatsapp_unread": True,
         "show_whatsapp_detail_view": True,
+        "search_spotify": True,
+        "spotify_get_auth_url": True,
+        "spotify_connect_account": True,
+        "spotify_get_playback_status": True,
+        "spotify_list_playlists": True,
+        "spotify_get_favorites": True,
+        "spotify_get_daylist": True,
+        "spotify_add_to_playlist": True,
+        "spotify_add_to_favorites": True,
+        "spotify_play": True,
+        "spotify_pause": True,
+        "spotify_resume": True,
+        "spotify_next": True,
+        "spotify_previous": True,
+        "spotify_set_playback_mode": True,
         "clear_detail_view": False,
         "system_check": True,
         "search_memory": True,
@@ -158,11 +176,21 @@ DEFAULT_SETTINGS = {
     "whatsapp_notify_enabled": True,
     "whatsapp_show_detail_view": True,
     "gemini_api_key": "",
-    "finnhub_api_key": ""
+    "finnhub_api_key": "",
+    "spotify_client_id": "",
+    "spotify_client_secret": "",
+    "spotify_redirect_uri": "http://127.0.0.1:8000/spotify/callback",
+    "spotify_scopes": "",
+    "spotify_refresh_token": "",
+    "spotify_user_access_token": "",
+    "spotify_user_token_expires_at": 0,
+    "spotify_last_device_id": "",
+    "spotify_connected_user": {},
 }
 
 SETTINGS = DEFAULT_SETTINGS.copy()
 SETTINGS["tool_enabled"] = dict(DEFAULT_SETTINGS["tool_permissions"])
+spotify_agent = SpotifyAgent(settings_path=SETTINGS_FILE)
 
 
 def _enforce_tool_invariants():
@@ -185,6 +213,20 @@ def _settings_for_client():
     backup_pin_salt = str(public_settings.pop("backup_pin_salt", "") or "").strip()
     public_settings["backup_pin_configured"] = bool(backup_pin_hash and backup_pin_salt)
     public_settings["face_reference_configured"] = bool(SETTINGS.get("face_reference_configured", False)) and os.path.exists(REFERENCE_IMAGE_FILE)
+    spotify_client_id = str(public_settings.get("spotify_client_id", "") or "").strip()
+    spotify_client_secret = str(public_settings.get("spotify_client_secret", "") or "").strip()
+    spotify_refresh = str(public_settings.get("spotify_refresh_token", "") or "").strip()
+    spotify_access = str(public_settings.get("spotify_user_access_token", "") or "").strip()
+    spotify_user = public_settings.get("spotify_connected_user")
+    public_settings["spotify_client_id_configured"] = bool(spotify_client_id)
+    public_settings["spotify_client_secret_configured"] = bool(spotify_client_secret)
+    public_settings["spotify_refresh_token_configured"] = bool(spotify_refresh)
+    public_settings["spotify_user_access_token_configured"] = bool(spotify_access)
+    public_settings["spotify_connected"] = bool(
+        spotify_refresh
+        or spotify_access
+        or (isinstance(spotify_user, dict) and str(spotify_user.get("id", "") or "").strip())
+    )
     return public_settings
 
 
@@ -464,6 +506,105 @@ async def startup_event():
 @app.get("/status")
 async def status():
     return {"status": "running", "service": "A.D.A Backend"}
+
+
+@app.get("/spotify/callback", response_class=HTMLResponse)
+async def spotify_callback(code: str = "", state: str = "", error: str = "", error_description: str = ""):
+        if error:
+                safe_error = str(error or "").strip()
+                safe_desc = str(error_description or "").strip()
+                return f"""
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spotify OAuth Error</title>
+    <style>
+        body {{ font-family: Segoe UI, Arial, sans-serif; background: #0b1014; color: #d7f7ff; margin: 0; }}
+        .wrap {{ max-width: 840px; margin: 40px auto; padding: 20px; }}
+        .card {{ background: #101821; border: 1px solid #1f3a46; border-radius: 12px; padding: 18px; }}
+        h1 {{ margin-top: 0; color: #7ee7ff; font-size: 22px; }}
+        p {{ line-height: 1.5; color: #b5d7df; }}
+        .error {{ color: #ff9c9c; font-weight: 600; }}
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="card">
+            <h1>Spotify Authorization Error</h1>
+            <p class="error">{safe_error}</p>
+            <p>{safe_desc}</p>
+            <p>Go back to ADA Settings and retry Spotify Connect/Reconnect.</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+        safe_code = str(code or "").strip()
+        safe_state = str(state or "").strip()
+        callback_url = f"http://127.0.0.1:8000/spotify/callback?code={safe_code}&state={safe_state}" if safe_code else ""
+
+        return f"""
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Spotify Connected</title>
+    <style>
+        body {{ font-family: Segoe UI, Arial, sans-serif; background: radial-gradient(circle at top, #12202b 0%, #0b1014 62%); color: #d7f7ff; margin: 0; }}
+        .wrap {{ max-width: 900px; margin: 36px auto; padding: 20px; }}
+        .card {{ background: rgba(16,24,33,0.95); border: 1px solid #1f3a46; border-radius: 14px; padding: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.35); }}
+        h1 {{ margin: 0 0 10px; color: #7ee7ff; font-size: 24px; }}
+        p {{ line-height: 1.5; color: #b5d7df; }}
+        .ok {{ color: #8fffca; font-weight: 700; }}
+        textarea {{ width: 100%; min-height: 86px; border-radius: 10px; border: 1px solid #244655; background: #0a131a; color: #d7f7ff; padding: 10px; font-family: Consolas, monospace; font-size: 12px; }}
+        .row {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }}
+        button {{ background: #136989; color: #fff; border: 0; border-radius: 8px; padding: 10px 12px; cursor: pointer; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }}
+        button:hover {{ background: #1781a8; }}
+        .hint {{ font-size: 12px; color: #98bfcb; margin-top: 12px; }}
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="card">
+            <h1>Spotify Authorization Received</h1>
+            <p class="ok">Code received successfully.</p>
+            <p>Now go back to ADA Settings and click Complete Connection. You can paste either the full callback URL or just the code.</p>
+
+            <p><strong>Code</strong></p>
+            <textarea id="code" readonly>{safe_code}</textarea>
+
+            <p><strong>Full Callback URL</strong></p>
+            <textarea id="fullurl" readonly>{callback_url}</textarea>
+
+            <div class="row">
+                <button onclick="copyById('code')">Copy Code</button>
+                <button onclick="copyById('fullurl')">Copy Full URL</button>
+            </div>
+
+            <p class="hint">If you still see invalid_grant, trigger Reconnect again and use only the newest code once.</p>
+        </div>
+    </div>
+
+    <script>
+        async function copyById(id) {{
+            const el = document.getElementById(id);
+            if (!el) return;
+            const text = el.value || '';
+            try {{
+                await navigator.clipboard.writeText(text);
+            }} catch (_e) {{
+                el.select();
+                document.execCommand('copy');
+            }}
+        }}
+    </script>
+</body>
+</html>
+"""
 
 @sio.event
 async def connect(sid, environ):
@@ -1812,6 +1953,116 @@ async def connect_google_workspace(sid, data=None):
         msg = f"Google OAuth fehlgeschlagen: {str(e)}"
         await sio.emit('google_workspace_connection_result', {'ok': False, 'message': msg}, room=sid)
 
+
+@sio.event
+async def spotify_start_connect(sid, data=None):
+    payload = data or {}
+    force_reauth = bool(payload.get("force_reauth", False))
+
+    if force_reauth:
+        SETTINGS["spotify_refresh_token"] = ""
+        SETTINGS["spotify_user_access_token"] = ""
+        SETTINGS["spotify_user_token_expires_at"] = 0
+        SETTINGS["spotify_connected_user"] = {}
+        SETTINGS["spotify_last_device_id"] = ""
+        save_settings()
+
+    try:
+        auth = await asyncio.to_thread(spotify_agent.get_auth_url, "settings-ui")
+        auth_url = str(auth.get("auth_url", "") or "").strip()
+        redirect_uri = str(auth.get("redirect_uri", "") or "").strip()
+        scope = str(auth.get("scope", "") or "").strip()
+
+        opened = False
+        if auth_url:
+            try:
+                opened = bool(await asyncio.to_thread(webbrowser.open, auth_url, 2))
+            except Exception:
+                opened = False
+
+        await sio.emit(
+            'spotify_connection_result',
+            {
+                'ok': True,
+                'step': 'auth_url_ready',
+                'opened_browser': opened,
+                'auth_url': auth_url,
+                'redirect_uri': redirect_uri,
+                'scope': scope,
+                'message': 'Spotify Auth-URL erstellt. Browser wurde geoeffnet.' if opened else 'Spotify Auth-URL erstellt. Bitte oeffne den Link manuell im Browser.',
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'spotify_connection_result',
+            {'ok': False, 'step': 'auth_url_failed', 'message': f'Spotify OAuth Start fehlgeschlagen: {str(e)}'},
+            room=sid,
+        )
+
+
+@sio.event
+async def spotify_complete_connect(sid, data=None):
+    payload = data or {}
+    code = str(payload.get("code", "") or "").strip()
+    if not code:
+        await sio.emit(
+            'spotify_connection_result',
+            {'ok': False, 'step': 'connect_failed', 'message': 'Bitte den Spotify Code oder die komplette Callback-URL eingeben.'},
+            room=sid,
+        )
+        return
+
+    try:
+        connected = await asyncio.to_thread(spotify_agent.connect_account, code)
+
+        # Keep in-memory settings synchronized with values written by SpotifyAgent.
+        load_settings()
+
+        user = connected.get("user", {}) if isinstance(connected, dict) else {}
+        display_name = str(user.get("display_name", "") or "").strip()
+        user_id = str(user.get("id", "") or "").strip()
+        label = display_name or user_id or "unknown"
+
+        await sio.emit(
+            'spotify_connection_result',
+            {
+                'ok': True,
+                'step': 'connected',
+                'user': user,
+                'message': f'Spotify erfolgreich verbunden ({label}).',
+            },
+            room=sid,
+        )
+        await sio.emit('settings', _settings_for_client(), room=sid)
+    except Exception as e:
+        await sio.emit(
+            'spotify_connection_result',
+            {'ok': False, 'step': 'connect_failed', 'message': f'Spotify-Verbindung fehlgeschlagen: {str(e)}'},
+            room=sid,
+        )
+
+
+@sio.event
+async def spotify_disconnect(sid, data=None):
+    SETTINGS["spotify_refresh_token"] = ""
+    SETTINGS["spotify_user_access_token"] = ""
+    SETTINGS["spotify_user_token_expires_at"] = 0
+    SETTINGS["spotify_connected_user"] = {}
+    SETTINGS["spotify_last_device_id"] = ""
+    save_settings()
+
+    await sio.emit(
+        'spotify_connection_result',
+        {
+            'ok': True,
+            'step': 'disconnected',
+            'message': 'Spotify Tokens wurden geloescht. Account ist getrennt.',
+        },
+        room=sid,
+    )
+    await sio.emit('settings', _settings_for_client(), room=sid)
+
 @sio.event
 async def update_settings(sid, data):
     # Generic update
@@ -1964,6 +2215,23 @@ async def update_settings(sid, data):
             await sio.emit('status', {'msg': 'Stock API key saved.'}, room=sid)
         else:
             await sio.emit('error', {'msg': 'Stock API key is empty. Please paste a valid key.'}, room=sid)
+
+    spotify_config_updated = False
+    if "spotify_client_id" in data:
+        SETTINGS["spotify_client_id"] = str(data.get("spotify_client_id", "") or "").strip()
+        spotify_config_updated = True
+    if "spotify_client_secret" in data:
+        SETTINGS["spotify_client_secret"] = str(data.get("spotify_client_secret", "") or "").strip()
+        spotify_config_updated = True
+    if "spotify_redirect_uri" in data:
+        SETTINGS["spotify_redirect_uri"] = str(data.get("spotify_redirect_uri", "") or "").strip() or "http://127.0.0.1:8000/spotify/callback"
+        spotify_config_updated = True
+    if "spotify_scopes" in data:
+        SETTINGS["spotify_scopes"] = str(data.get("spotify_scopes", "") or "").strip()
+        spotify_config_updated = True
+
+    if spotify_config_updated:
+        await sio.emit('status', {'msg': 'Spotify settings saved.'}, room=sid)
 
     if "tapo_username" in data or "tapo_password" in data:
         if "tapo_username" in data:

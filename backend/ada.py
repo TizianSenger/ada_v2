@@ -412,6 +412,7 @@ from google_gmail_integration import GoogleGmailIntegration
 from weather_agent import WeatherAgent
 from route_agent import RouteAgent
 from finnhub_agent import FinnhubAgent
+from spotify_agent import SpotifyAgent
 try:
     from memory_agent import MemoryAgent
     _MEMORY_AVAILABLE = True
@@ -476,6 +477,7 @@ class AudioLoop:
         self.google_gmail = GoogleGmailIntegration(token_path=GOOGLE_TOKEN_FILE)
         self.weather_agent = WeatherAgent(settings_path=SETTINGS_FILE)
         self.finnhub_agent = FinnhubAgent(settings_path=SETTINGS_FILE)
+        self.spotify_agent = SpotifyAgent(settings_path=SETTINGS_FILE)
         self.route_agent = RouteAgent()
 
         self.send_text_task = None
@@ -1035,6 +1037,14 @@ class AudioLoop:
             self.tool_enabled.get("get_stock_quote", True),
             self.tool_enabled.get("get_stock_news", True),
         ])
+        spotify_checks_enabled = any([
+            self.tool_enabled.get("search_spotify", True),
+            self.tool_enabled.get("spotify_get_playback_status", True),
+            self.tool_enabled.get("spotify_list_playlists", True),
+            self.tool_enabled.get("spotify_get_favorites", True),
+            self.tool_enabled.get("spotify_get_daylist", True),
+            self.tool_enabled.get("spotify_play", True),
+        ])
         route_checks_enabled = self.tool_enabled.get("route_plan", True)
         calendar_checks_enabled = any([
             self.tool_enabled.get("connect_google_workspace", True),
@@ -1074,6 +1084,8 @@ class AudioLoop:
                 planned_checks.append("Weather API")
             if stock_checks_enabled:
                 planned_checks.append("Stock Market API")
+            if spotify_checks_enabled:
+                planned_checks.append("Spotify API")
             if route_checks_enabled:
                 planned_checks.append("Route Service")
             if calendar_checks_enabled:
@@ -1400,6 +1412,46 @@ class AudioLoop:
                     msg = str(e)
                     status = "warn" if "FINNHUB_API_KEY fehlt" in msg else "fail"
                     add_check("Stock Market API", status, f"Stock API check failed: {msg}", duration_ms=(time.time() - t0) * 1000)
+
+            if spotify_checks_enabled:
+                # Spotify API probe
+                t0 = time.time()
+                try:
+                    playback = await asyncio.to_thread(self.spotify_agent.get_playback_status)
+                    track = (playback.get("track") or {}) if isinstance(playback, dict) else {}
+                    device = (playback.get("device") or {}) if isinstance(playback, dict) else {}
+                    is_playing = bool(playback.get("is_playing", False)) if isinstance(playback, dict) else False
+                    track_name = track.get("name") or "n/a"
+                    state_label = "playing" if is_playing else "paused"
+
+                    add_check(
+                        "Spotify API",
+                        "pass",
+                        f"Spotify API ok ({state_label}: {track_name}).",
+                        {
+                            "is_playing": is_playing,
+                            "track": track_name,
+                            "artists": track.get("artists") or [],
+                            "device": device.get("name") or "",
+                        },
+                        (time.time() - t0) * 1000,
+                    )
+                except Exception as e:
+                    msg = str(e)
+                    lower = msg.lower()
+                    warn_markers = [
+                        "nicht verbunden",
+                        "not connected",
+                        "oauth",
+                        "kein aktives spotify device",
+                        "kein aktives device",
+                        "credentials fehlen",
+                        "client_id",
+                        "client_secret",
+                        "refresh token",
+                    ]
+                    status = "warn" if any(marker in lower for marker in warn_markers) else "fail"
+                    add_check("Spotify API", status, f"Spotify check failed: {msg}", duration_ms=(time.time() - t0) * 1000)
 
             if route_checks_enabled:
                 # Route service probe
@@ -2762,6 +2814,409 @@ class AudioLoop:
                                             result_str = f"Aktuelle News ({scope}):\n" + "\n".join(lines)
                                     except Exception as e:
                                         result_str = f"Stock-News konnten nicht geladen werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "search_spotify":
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    limit = int(fc.args.get("limit", 8) or 8)
+
+                                    try:
+                                        result = await asyncio.to_thread(
+                                            self.spotify_agent.search_tracks,
+                                            query,
+                                            limit,
+                                        )
+                                        tracks = result.get("tracks", []) or []
+                                        if not tracks:
+                                            result_str = f"Keine Spotify-Treffer fuer '{query}' gefunden."
+                                        else:
+                                            lines = []
+                                            for track in tracks[:10]:
+                                                artists = ", ".join(track.get("artists", []) or [])
+                                                lines.append(
+                                                    f"- {track.get('name', 'Unknown')} - {artists} [{track.get('uri', '')}]"
+                                                )
+                                            result_str = "Spotify Suchergebnisse:\n" + "\n".join(lines)
+
+                                        self.emit_tool_view({
+                                            "type": "spotify",
+                                            "title": "Spotify Suche",
+                                            "spotify": {
+                                                "search": result,
+                                            },
+                                        })
+                                    except Exception as e:
+                                        result_str = f"Spotify-Suche fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_get_auth_url":
+                                    state = str(fc.args.get("state", "") or "").strip()
+
+                                    try:
+                                        auth = await asyncio.to_thread(
+                                            self.spotify_agent.get_auth_url,
+                                            state,
+                                        )
+                                        result_str = (
+                                            "Spotify Auth URL erstellt.\n"
+                                            f"URL: {auth.get('auth_url', '')}\n"
+                                            f"Redirect URI: {auth.get('redirect_uri', '')}\n"
+                                            "Oeffne die URL im Browser, erlaube Zugriff und gib danach den Code "
+                                            "(oder die komplette Callback-URL) an spotify_connect_account."
+                                        )
+                                    except Exception as e:
+                                        result_str = f"Spotify Auth URL konnte nicht erstellt werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_connect_account":
+                                    code = str(fc.args.get("code", "") or "").strip()
+
+                                    try:
+                                        connected = await asyncio.to_thread(
+                                            self.spotify_agent.connect_account,
+                                            code,
+                                        )
+                                        user = connected.get("user", {}) or {}
+                                        result_str = (
+                                            "Spotify erfolgreich verbunden. "
+                                            f"User: {user.get('display_name') or user.get('id') or 'unknown'}"
+                                        )
+                                    except Exception as e:
+                                        result_str = f"Spotify-Verbindung fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_get_playback_status":
+                                    try:
+                                        playback = await asyncio.to_thread(
+                                            self.spotify_agent.get_playback_status,
+                                        )
+                                        self.emit_tool_view({
+                                            "type": "spotify",
+                                            "title": "Spotify Playback",
+                                            "spotify": {
+                                                "playback": playback,
+                                            },
+                                        })
+
+                                        track = playback.get("track", {}) or {}
+                                        artists = ", ".join(track.get("artists", []) or [])
+                                        device = playback.get("device", {}) or {}
+                                        status = "playing" if playback.get("is_playing") else "paused"
+                                        result_str = (
+                                            f"Spotify Status: {status}. "
+                                            f"Track: {track.get('name', 'n/a')} - {artists}. "
+                                            f"Device: {device.get('name', 'n/a')} ({device.get('type', 'n/a')}). "
+                                            f"Shuffle: {playback.get('shuffle_state')}, Repeat: {playback.get('repeat_state')}."
+                                        )
+                                    except Exception as e:
+                                        result_str = f"Spotify Playback-Status fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_list_playlists":
+                                    limit = int(fc.args.get("limit", 20) or 20)
+
+                                    try:
+                                        playlists = await asyncio.to_thread(
+                                            self.spotify_agent.list_playlists,
+                                            limit,
+                                        )
+                                        rows = playlists.get("playlists", []) or []
+                                        if not rows:
+                                            result_str = "Keine Spotify Playlists gefunden."
+                                        else:
+                                            lines = []
+                                            for pl in rows[:20]:
+                                                lines.append(
+                                                    f"- {pl.get('name', 'Unknown')} ({pl.get('tracks_total', 0)} Tracks) [ID: {pl.get('id', '')}]"
+                                                )
+                                            result_str = "Spotify Playlists:\n" + "\n".join(lines)
+
+                                        self.emit_tool_view({
+                                            "type": "spotify",
+                                            "title": "Spotify Playlists",
+                                            "spotify": {
+                                                "playlists": playlists,
+                                            },
+                                        })
+                                    except Exception as e:
+                                        result_str = f"Spotify Playlists konnten nicht geladen werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_get_favorites":
+                                    limit = int(fc.args.get("limit", 20) or 20)
+
+                                    try:
+                                        favorites = await asyncio.to_thread(
+                                            self.spotify_agent.get_favorites,
+                                            limit,
+                                        )
+                                        rows = favorites.get("tracks", []) or []
+                                        if not rows:
+                                            result_str = "Keine favorisierten Spotify Tracks gefunden."
+                                        else:
+                                            lines = []
+                                            for track in rows[:20]:
+                                                artists = ", ".join(track.get("artists", []) or [])
+                                                lines.append(
+                                                    f"- {track.get('name', 'Unknown')} - {artists} [{track.get('uri', '')}]"
+                                                )
+                                            result_str = "Spotify Favoriten:\n" + "\n".join(lines)
+
+                                        self.emit_tool_view({
+                                            "type": "spotify",
+                                            "title": "Spotify Favoriten",
+                                            "spotify": {
+                                                "favorites": favorites,
+                                            },
+                                        })
+                                    except Exception as e:
+                                        result_str = f"Spotify Favoriten konnten nicht geladen werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_get_daylist":
+                                    limit = int(fc.args.get("limit", 30) or 30)
+
+                                    try:
+                                        daylist = await asyncio.to_thread(
+                                            self.spotify_agent.get_daylist,
+                                            limit,
+                                        )
+                                        if not daylist.get("found", False):
+                                            result_str = str(daylist.get("message", "Keine Daylist gefunden."))
+                                        else:
+                                            playlist = daylist.get("playlist", {}) or {}
+                                            tracks = daylist.get("tracks", []) or []
+                                            lines = [
+                                                f"Daylist: {playlist.get('name', 'Unknown')} [ID: {playlist.get('id', '')}]"
+                                            ]
+                                            for track in tracks[:15]:
+                                                artists = ", ".join(track.get("artists", []) or [])
+                                                lines.append(f"- {track.get('name', 'Unknown')} - {artists}")
+                                            result_str = "\n".join(lines)
+
+                                        self.emit_tool_view({
+                                            "type": "spotify",
+                                            "title": "Spotify Daylist",
+                                            "spotify": {
+                                                "daylist": daylist,
+                                            },
+                                        })
+                                    except Exception as e:
+                                        result_str = f"Spotify Daylist konnte nicht geladen werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_add_to_playlist":
+                                    track_query = str(fc.args.get("track_query", "") or "").strip()
+                                    playlist = str(fc.args.get("playlist", "") or "").strip()
+
+                                    try:
+                                        added = await asyncio.to_thread(
+                                            self.spotify_agent.add_to_playlist,
+                                            track_query,
+                                            playlist,
+                                        )
+                                        result_str = (
+                                            "Track zu Playlist hinzugefuegt. "
+                                            f"Playlist-ID: {added.get('playlist_id', '')}, "
+                                            f"Track: {added.get('track_uri', '')}"
+                                        )
+                                    except Exception as e:
+                                        result_str = f"Track konnte nicht zur Playlist hinzugefuegt werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_add_to_favorites":
+                                    track_query = str(fc.args.get("track_query", "") or "").strip()
+
+                                    try:
+                                        added = await asyncio.to_thread(
+                                            self.spotify_agent.add_to_favorites,
+                                            track_query,
+                                        )
+                                        result_str = (
+                                            "Track zu Spotify Favoriten hinzugefuegt. "
+                                            f"Track: {added.get('track_uri', '')}"
+                                        )
+                                    except Exception as e:
+                                        result_str = f"Track konnte nicht zu Favoriten hinzugefuegt werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_play":
+                                    query = str(fc.args.get("query", "") or "").strip()
+                                    device = str(fc.args.get("device", "") or "").strip()
+
+                                    try:
+                                        play_result = await asyncio.to_thread(
+                                            self.spotify_agent.play,
+                                            query,
+                                            device,
+                                        )
+                                        action = play_result.get("action", "play")
+                                        track_name = str(play_result.get("track_name", "") or "").strip()
+                                        if track_name:
+                                            result_str = f"Spotify Aktion verifiziert: {action}. Aktueller Track: {track_name}."
+                                        else:
+                                            result_str = f"Spotify Aktion verifiziert: {action}."
+                                    except Exception as e:
+                                        result_str = f"Spotify Play fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_pause":
+                                    device = str(fc.args.get("device", "") or "").strip()
+
+                                    try:
+                                        await asyncio.to_thread(self.spotify_agent.pause, device)
+                                        result_str = "Spotify Playback verifiziert pausiert."
+                                    except Exception as e:
+                                        result_str = f"Spotify Pause fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_resume":
+                                    device = str(fc.args.get("device", "") or "").strip()
+
+                                    try:
+                                        resume_result = await asyncio.to_thread(self.spotify_agent.resume, device)
+                                        track_name = str(resume_result.get("track_name", "") or "").strip()
+                                        if track_name:
+                                            result_str = f"Spotify Playback verifiziert fortgesetzt. Aktueller Track: {track_name}."
+                                        else:
+                                            result_str = "Spotify Playback verifiziert fortgesetzt."
+                                    except Exception as e:
+                                        result_str = f"Spotify Resume fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_next":
+                                    device = str(fc.args.get("device", "") or "").strip()
+
+                                    try:
+                                        next_result = await asyncio.to_thread(self.spotify_agent.next_track, device)
+                                        track_name = str(next_result.get("track_name", "") or "").strip()
+                                        if track_name:
+                                            result_str = f"Spotify verifiziert: naechster Track ({track_name})."
+                                        else:
+                                            result_str = "Spotify verifiziert: naechster Track."
+                                    except Exception as e:
+                                        result_str = f"Spotify Next fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_previous":
+                                    device = str(fc.args.get("device", "") or "").strip()
+
+                                    try:
+                                        prev_result = await asyncio.to_thread(self.spotify_agent.previous_track, device)
+                                        track_name = str(prev_result.get("track_name", "") or "").strip()
+                                        if track_name:
+                                            result_str = f"Spotify verifiziert: vorheriger Track ({track_name})."
+                                        else:
+                                            result_str = "Spotify verifiziert: vorheriger Track."
+                                    except Exception as e:
+                                        result_str = f"Spotify Previous fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_set_playback_mode":
+                                    shuffle = fc.args.get("shuffle", None)
+                                    repeat = str(fc.args.get("repeat", "") or "").strip()
+                                    device = str(fc.args.get("device", "") or "").strip()
+
+                                    try:
+                                        mode_result = await asyncio.to_thread(
+                                            self.spotify_agent.set_playback_mode,
+                                            shuffle,
+                                            repeat,
+                                            device,
+                                        )
+                                        result_str = f"Spotify Playback-Modus aktualisiert: {mode_result}."
+                                    except Exception as e:
+                                        result_str = f"Spotify Playback-Modus konnte nicht gesetzt werden. Details: {str(e)}"
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,

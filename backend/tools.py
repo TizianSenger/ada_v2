@@ -374,6 +374,235 @@ _get_stock_news_tool = {
     }
 }
 
+_search_spotify_tool = {
+    "name": "search_spotify",
+    "description": "Search Spotify tracks by title, artist, or keywords.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "query": {
+                "type": "STRING",
+                "description": "Track or artist query, e.g. Daft Punk Get Lucky."
+            },
+            "limit": {
+                "type": "NUMBER",
+                "description": "Maximum search results (1-20). Optional, defaults to 8."
+            }
+        },
+        "required": ["query"]
+    }
+}
+
+_spotify_get_auth_url_tool = {
+    "name": "spotify_get_auth_url",
+    "description": "Create a Spotify OAuth authorization URL to connect the user's account.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "state": {
+                "type": "STRING",
+                "description": "Optional OAuth state value for CSRF/session tracking."
+            }
+        }
+    }
+}
+
+_spotify_connect_account_tool = {
+    "name": "spotify_connect_account",
+    "description": "Complete Spotify OAuth by exchanging a code (or callback URL) for access tokens.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "code": {
+                "type": "STRING",
+                "description": "Spotify OAuth code or full callback URL containing the code parameter."
+            }
+        },
+        "required": ["code"]
+    }
+}
+
+_spotify_get_playback_status_tool = {
+    "name": "spotify_get_playback_status",
+    "description": "Get current Spotify playback status, active device, and current track.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+    }
+}
+
+_spotify_list_playlists_tool = {
+    "name": "spotify_list_playlists",
+    "description": "List the user's Spotify playlists.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "limit": {
+                "type": "NUMBER",
+                "description": "Maximum playlists (1-50). Optional, defaults to 20."
+            }
+        }
+    }
+}
+
+_spotify_get_favorites_tool = {
+    "name": "spotify_get_favorites",
+    "description": "List tracks from the user's liked songs library.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "limit": {
+                "type": "NUMBER",
+                "description": "Maximum tracks (1-50). Optional, defaults to 20."
+            }
+        }
+    }
+}
+
+_spotify_get_daylist_tool = {
+    "name": "spotify_get_daylist",
+    "description": "Fetch tracks from the user's Daylist playlist if available.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "limit": {
+                "type": "NUMBER",
+                "description": "Maximum tracks to return (1-50). Optional, defaults to 30."
+            }
+        }
+    }
+}
+
+_spotify_add_to_playlist_tool = {
+    "name": "spotify_add_to_playlist",
+    "description": "Add a track to one of the user's playlists by track query/URI and playlist name/ID.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "track_query": {
+                "type": "STRING",
+                "description": "Track query, Spotify track URI, or track URL."
+            },
+            "playlist": {
+                "type": "STRING",
+                "description": "Playlist name, Spotify playlist ID, URI, or URL."
+            }
+        },
+        "required": ["track_query", "playlist"]
+    }
+}
+
+_spotify_add_to_favorites_tool = {
+    "name": "spotify_add_to_favorites",
+    "description": "Add a track to the user's Spotify liked songs.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "track_query": {
+                "type": "STRING",
+                "description": "Track query, Spotify track URI, or track URL."
+            }
+        },
+        "required": ["track_query"]
+    }
+}
+
+_spotify_play_tool = {
+    "name": "spotify_play",
+    "description": "Start Spotify playback. Optional track query can be provided to play a specific track.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "query": {
+                "type": "STRING",
+                "description": "Optional track query, URI, or URL to play."
+            },
+            "device": {
+                "type": "STRING",
+                "description": "Optional Spotify device name or device ID."
+            }
+        }
+    }
+}
+
+_spotify_pause_tool = {
+    "name": "spotify_pause",
+    "description": "Pause Spotify playback.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "device": {
+                "type": "STRING",
+                "description": "Optional Spotify device name or device ID."
+            }
+        }
+    }
+}
+
+_spotify_resume_tool = {
+    "name": "spotify_resume",
+    "description": "Resume Spotify playback.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "device": {
+                "type": "STRING",
+                "description": "Optional Spotify device name or device ID."
+            }
+        }
+    }
+}
+
+_spotify_next_tool = {
+    "name": "spotify_next",
+    "description": "Skip to the next track on Spotify.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "device": {
+                "type": "STRING",
+                "description": "Optional Spotify device name or device ID."
+            }
+        }
+    }
+}
+
+_spotify_previous_tool = {
+    "name": "spotify_previous",
+    "description": "Go to the previous track on Spotify.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "device": {
+                "type": "STRING",
+                "description": "Optional Spotify device name or device ID."
+            }
+        }
+    }
+}
+
+_spotify_set_playback_mode_tool = {
+    "name": "spotify_set_playback_mode",
+    "description": "Set Spotify playback mode options like shuffle and repeat.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "shuffle": {
+                "type": "BOOLEAN",
+                "description": "Optional shuffle state true/false."
+            },
+            "repeat": {
+                "type": "STRING",
+                "description": "Optional repeat mode: off, track, or context."
+            },
+            "device": {
+                "type": "STRING",
+                "description": "Optional Spotify device name or device ID."
+            }
+        }
+    }
+}
+
 _route_plan_tool = {
     "name": "route_plan",
     "description": "Plan a route for driving by car using free OpenStreetMap services (Nominatim + OSRM) and return data for detail view map display.",
@@ -834,6 +1063,21 @@ function_declarations = [
     _search_stock_symbol_tool,
     _get_stock_quote_tool,
     _get_stock_news_tool,
+    _search_spotify_tool,
+    _spotify_get_auth_url_tool,
+    _spotify_connect_account_tool,
+    _spotify_get_playback_status_tool,
+    _spotify_list_playlists_tool,
+    _spotify_get_favorites_tool,
+    _spotify_get_daylist_tool,
+    _spotify_add_to_playlist_tool,
+    _spotify_add_to_favorites_tool,
+    _spotify_play_tool,
+    _spotify_pause_tool,
+    _spotify_resume_tool,
+    _spotify_next_tool,
+    _spotify_previous_tool,
+    _spotify_set_playback_mode_tool,
     _route_plan_tool,
     _get_whatsapp_unread_tool,
     _show_whatsapp_detail_view_tool,
