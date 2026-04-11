@@ -105,6 +105,7 @@ DEFAULT_SETTINGS = {
         "get_print_status": True,
         "connect_google_workspace": True,
         "get_current_datetime": True,
+        "mute_assistant": True,
         "get_weather": True,
         "get_weather_forecast": True,
         "get_weather_full_report": True,
@@ -188,6 +189,9 @@ DEFAULT_SETTINGS = {
     "spotify_user_token_expires_at": 0,
     "spotify_last_device_id": "",
     "spotify_connected_user": {},
+    "wakeword_enabled": False,
+    "wakeword_model": "hey_jarvis",
+    "wakeword_threshold": 0.55,
 }
 
 SETTINGS = DEFAULT_SETTINGS.copy()
@@ -764,6 +768,22 @@ async def start_audio(sid, data=None):
         print(f"Sending Error to frontend: {msg}")
         asyncio.create_task(sio.emit('error', {'msg': msg}))
 
+    # Callback to send status updates from audio loop tools/actions
+    def on_status(msg):
+        if isinstance(msg, dict):
+            text = str(msg.get('msg', '') or '').strip()
+            if not text:
+                return
+            payload = dict(msg)
+            payload['msg'] = text
+            asyncio.create_task(sio.emit('status', payload))
+            return
+
+        text = str(msg or '').strip()
+        if not text:
+            return
+        asyncio.create_task(sio.emit('status', {'msg': text}))
+
     # Callback to send structured tool views to the left companion panel
     def on_tool_view(data):
         asyncio.create_task(sio.emit('left_panel_view', data, room=sid))
@@ -808,6 +828,7 @@ async def start_audio(sid, data=None):
             on_device_update=on_device_update,
             on_error=on_error,
             on_tool_view=on_tool_view,
+            on_status=on_status,
             on_whatsapp_tool_request=on_whatsapp_tool_request,
 
             input_device_index=device_index,
@@ -823,6 +844,12 @@ async def start_audio(sid, data=None):
             audio_loop.set_long_term_memory_enabled(SETTINGS.get("long_term_memory_enabled", True))
         if hasattr(audio_loop, "set_memory_locked"):
             audio_loop.set_memory_locked(SETTINGS.get("memory_locked", False))
+        if hasattr(audio_loop, "set_wakeword_config"):
+            audio_loop.set_wakeword_config(
+                enabled=SETTINGS.get("wakeword_enabled", False),
+                threshold=SETTINGS.get("wakeword_threshold", 0.55),
+                model_name=SETTINGS.get("wakeword_model", "hey_jarvis"),
+            )
         
         # Check initial mute state
         if data and data.get('muted', False):
@@ -2336,6 +2363,27 @@ async def update_settings(sid, data):
     if "default_weather_location" in data:
         SETTINGS["default_weather_location"] = str(data.get("default_weather_location", "") or "").strip() or "Berlin,DE"
         print(f"[SERVER] Default weather location set to: {SETTINGS['default_weather_location']}")
+
+    if "wakeword_enabled" in data:
+        SETTINGS["wakeword_enabled"] = bool(data.get("wakeword_enabled", False))
+
+    if "wakeword_model" in data:
+        value = str(data.get("wakeword_model", "") or "").strip()
+        SETTINGS["wakeword_model"] = value or "hey_jarvis"
+
+    if "wakeword_threshold" in data:
+        try:
+            threshold = float(data.get("wakeword_threshold", 0.55))
+        except (TypeError, ValueError):
+            threshold = float(SETTINGS.get("wakeword_threshold", 0.55))
+        SETTINGS["wakeword_threshold"] = max(0.1, min(0.99, threshold))
+
+    if audio_loop and hasattr(audio_loop, "set_wakeword_config"):
+        audio_loop.set_wakeword_config(
+            enabled=SETTINGS.get("wakeword_enabled", False),
+            threshold=SETTINGS.get("wakeword_threshold", 0.55),
+            model_name=SETTINGS.get("wakeword_model", "hey_jarvis"),
+        )
 
     if "voice_name" in data:
         voice_name = str(data.get("voice_name", "") or "").strip() or "Kore"

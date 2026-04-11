@@ -244,6 +244,15 @@ _get_current_datetime_tool = {
     }
 }
 
+_mute_assistant_tool = {
+    "name": "mute_assistant",
+    "description": "Mute ADA microphone listening until user unmutes again.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+    }
+}
+
 _get_weather_tool = {
     "name": "get_weather",
     "description": "Get current weather data for a location using OpenWeatherMap. If location is omitted, uses default weather location from settings.",
@@ -1085,6 +1094,7 @@ function_declarations = [
     _get_print_status_tool,
     _connect_google_tool,
     _get_current_datetime_tool,
+    _mute_assistant_tool,
     _get_weather_tool,
     _get_weather_forecast_tool,
     _get_weather_full_report_tool,

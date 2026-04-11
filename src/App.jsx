@@ -252,6 +252,7 @@ function App() {
     const lastProjectUpdateRef = useRef({ name: null, at: 0 });
     const aiDisplayNameInitializedRef = useRef(false);
     const powerOffPinModalOpenRef = useRef(false);
+    const lastWakewordToneAtRef = useRef(0);
 
     const pushBootEvent = (line) => {
         const msg = String(line || '').trim();
@@ -663,6 +664,27 @@ function App() {
             }
             pushBootEvent(`[SERVER] ${data.msg}`);
             updateQuotaInfoFromMessage(data.msg, 'status');
+
+            if (data?.source === 'wakeword' && data?.msg === 'Audio Resumed') {
+                const now = Date.now();
+                if (now - lastWakewordToneAtRef.current > 700) {
+                    lastWakewordToneAtRef.current = now;
+                    try {
+                        const tone = new Audio('/sounds/wakeword-unmute.wav');
+                        tone.volume = 0.72;
+                        void tone.play();
+                    } catch (_e) {
+                        // Ignore audio playback failures (missing file/device autoplay restrictions).
+                    }
+                }
+            }
+
+            if (data?.msg === 'Audio Paused') {
+                setIsMuted(true);
+            } else if (data?.msg === 'Audio Resumed') {
+                setIsMuted(false);
+            }
+
             // Update status bar based on backend messages
             if (data.msg === 'A.D.A Started') {
                 setStatus('Model Connected');

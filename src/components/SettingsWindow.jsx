@@ -21,6 +21,7 @@ const TOOLS = [
     { id: 'print_stl', label: 'Print 3D Model' },
     { id: 'get_print_status', label: 'Get Print Status' },
     { id: 'get_current_datetime', label: 'Get Current DateTime' },
+    { id: 'mute_assistant', label: 'Mute Assistant' },
     { id: 'get_weather', label: 'Get Weather' },
     { id: 'get_weather_forecast', label: 'Get Weather Forecast' },
     { id: 'get_weather_full_report', label: 'Get Weather Full Report' },
@@ -111,6 +112,7 @@ const TOOL_GROUPS = {
     ],
     Utility: [
         'get_current_datetime',
+        'mute_assistant',
         'get_weather',
         'get_weather_forecast',
         'get_weather_full_report',
@@ -203,6 +205,14 @@ const CALENDAR_MAIL_TOOL_IDS = [
 
 const TAB_BUTTON = 'px-3 py-1.5 text-xs rounded-md border transition-colors';
 const VOICE_OPTIONS = ['Kore', 'Orus', 'Fenrir', 'Charon', 'Puck', 'Aoede'];
+const WAKEWORD_MODEL_OPTIONS = [
+    { id: 'hey_jarvis', label: 'Hey Jarvis' },
+    { id: 'alexa', label: 'Alexa' },
+    { id: 'hey_mycroft', label: 'Hey Mycroft' },
+    { id: 'hey_rhasspy', label: 'Hey Rhasspy' },
+    { id: 'timer', label: 'Timer' },
+    { id: 'weather', label: 'Weather' },
+];
 const SPLASH_THEME_OPTIONS = [
     {
         id: 'CYAN_TERMINAL',
@@ -472,6 +482,10 @@ const SettingsWindow = ({
     const [spotifyRefreshTokenConfigured, setSpotifyRefreshTokenConfigured] = useState(false);
     const [spotifyAccessTokenConfigured, setSpotifyAccessTokenConfigured] = useState(false);
     const [spotifyLastDeviceId, setSpotifyLastDeviceId] = useState('');
+    const [wakewordEnabled, setWakewordEnabled] = useState(false);
+    const [wakewordModel, setWakewordModel] = useState('hey_jarvis');
+    const [wakewordThreshold, setWakewordThreshold] = useState('0.55');
+    const [wakewordMessage, setWakewordMessage] = useState('');
     const [googleConnectMessage, setGoogleConnectMessage] = useState('');
     const [googleConnecting, setGoogleConnecting] = useState(false);
     const [defaultWeatherLocation, setDefaultWeatherLocation] = useState('Berlin,DE');
@@ -594,6 +608,11 @@ const SettingsWindow = ({
                 setSpotifyRefreshTokenConfigured(Boolean(settings.spotify_refresh_token_configured));
                 setSpotifyAccessTokenConfigured(Boolean(settings.spotify_user_access_token_configured));
                 setSpotifyLastDeviceId(String(settings.spotify_last_device_id || ''));
+                setWakewordEnabled(Boolean(settings.wakeword_enabled));
+                setWakewordModel(String(settings.wakeword_model || 'hey_jarvis'));
+                const thresholdRaw = Number.parseFloat(settings.wakeword_threshold);
+                const thresholdValue = Number.isFinite(thresholdRaw) ? Math.max(0.1, Math.min(0.99, thresholdRaw)) : 0.55;
+                setWakewordThreshold(thresholdValue.toFixed(2));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
                 setVoiceName(settings.voice_name || 'Kore');
                 setAiDisplayName(settings.ai_display_name || 'Jarvis');
@@ -1051,6 +1070,41 @@ const SettingsWindow = ({
             setSpotifyClientSecretConfigured(true);
         }
         setSpotifyStatusMessage('Spotify settings saved.');
+    };
+
+    const saveWakewordSettings = () => {
+        const model = String(wakewordModel || '').trim() || 'hey_jarvis';
+        const parsed = Number.parseFloat(wakewordThreshold);
+        const threshold = Number.isFinite(parsed) ? Math.max(0.1, Math.min(0.99, parsed)) : 0.55;
+
+        setWakewordModel(model);
+        setWakewordThreshold(threshold.toFixed(2));
+        socket.emit('update_settings', {
+            wakeword_enabled: Boolean(wakewordEnabled),
+            wakeword_model: model,
+            wakeword_threshold: threshold,
+        });
+        setWakewordMessage(
+            wakewordEnabled
+                ? `Wake word enabled (${model}, threshold ${threshold.toFixed(2)}).`
+                : 'Wake word disabled.'
+        );
+    };
+
+    const toggleWakewordEnabled = () => {
+        const nextEnabled = !wakewordEnabled;
+        setWakewordEnabled(nextEnabled);
+        const model = String(wakewordModel || '').trim() || 'hey_jarvis';
+        const parsed = Number.parseFloat(wakewordThreshold);
+        const threshold = Number.isFinite(parsed) ? Math.max(0.1, Math.min(0.99, parsed)) : 0.55;
+
+        socket.emit('update_settings', {
+            wakeword_enabled: nextEnabled,
+            wakeword_model: model,
+            wakeword_threshold: threshold,
+        });
+
+        setWakewordMessage(nextEnabled ? 'Wake word activated.' : 'Wake word deactivated.');
     };
 
     const startSpotifyConnect = (forceReauth = false) => {
@@ -1720,6 +1774,54 @@ const SettingsWindow = ({
                         </button>
                     </div>
                     {voiceMessage && <p className="mt-2 text-[10px] text-cyan-300/80">{voiceMessage}</p>}
+                </div>
+            </div>
+
+            <div>
+                <h3 className="text-cyan-300 font-semibold text-xs uppercase tracking-wider mb-2">Wake Word Unmute</h3>
+                <div className="bg-gray-900/40 border border-cyan-900/30 rounded-md p-3 space-y-2">
+                    <ToggleRow
+                        label="Enable Wake Word While Muted"
+                        enabled={wakewordEnabled}
+                        onToggle={toggleWakewordEnabled}
+                    />
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <select
+                            value={wakewordModel}
+                            onChange={(e) => setWakewordModel(e.target.value)}
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        >
+                            {WAKEWORD_MODEL_OPTIONS.map((item) => (
+                                <option key={item.id} value={item.id}>{item.label}</option>
+                            ))}
+                        </select>
+                        <input
+                            type="number"
+                            min="0.1"
+                            max="0.99"
+                            step="0.01"
+                            value={wakewordThreshold}
+                            onChange={(e) => setWakewordThreshold(e.target.value)}
+                            placeholder="Detection threshold"
+                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
+                        />
+                    </div>
+
+                    <div className="text-[10px] text-cyan-500/70">
+                        Listens for wake word only while ADA is muted. Lower threshold is more sensitive (0.45-0.60 is usually good).
+                    </div>
+
+                    <div className="flex items-center justify-end mt-1">
+                        <button
+                            onClick={saveWakewordSettings}
+                            className="text-[10px] uppercase tracking-wider px-2 py-1 rounded bg-cyan-700/70 hover:bg-cyan-600 text-white"
+                        >
+                            Save Wake Settings
+                        </button>
+                    </div>
+
+                    {wakewordMessage && <p className="mt-1 text-[10px] text-cyan-300/80">{wakewordMessage}</p>}
                 </div>
             </div>
 

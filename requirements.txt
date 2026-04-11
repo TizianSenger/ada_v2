@@ -24,6 +24,8 @@ aiohttp>=3.9.0
 python-dotenv
 chromadb
 spotipy
+onnxruntime
+openwakeword
 # Face & Hand tracking
 mediapipe
 # CAD Generation

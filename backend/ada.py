@@ -16,6 +16,10 @@ import struct
 import re
 import time
 import datetime
+import urllib.request
+import numpy as np
+import openwakeword
+from openwakeword.model import Model as OpenWakeWordModel
 
 from google import genai
 from google.genai import types
@@ -32,6 +36,8 @@ CHANNELS = 1
 SEND_SAMPLE_RATE = 16000
 RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE = 1024
+WAKEWORD_FRAME_SAMPLES = 1280
+WAKEWORD_ARM_DELAY_SECONDS = 1.2
 
 MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_MODE = "camera"
@@ -344,6 +350,74 @@ def resolve_memory_locked():
     return bool(data.get("memory_locked", False))
 
 
+def resolve_wakeword_settings():
+    data = _read_settings_json()
+
+    enabled = bool(data.get("wakeword_enabled", False))
+    model_name = str(data.get("wakeword_model", "hey_jarvis") or "hey_jarvis").strip()
+    if not model_name:
+        model_name = "hey_jarvis"
+
+    try:
+        threshold = float(data.get("wakeword_threshold", 0.55))
+    except (TypeError, ValueError):
+        threshold = 0.55
+    threshold = max(0.1, min(0.99, threshold))
+
+    return {
+        "enabled": enabled,
+        "model_name": model_name,
+        "threshold": threshold,
+    }
+
+
+def _wakeword_model_key(model_name):
+    requested = str(model_name or "").strip().lower().replace(" ", "_")
+    if requested in openwakeword.MODELS:
+        return requested
+
+    for key in openwakeword.MODELS.keys():
+        if requested and requested in str(key).lower():
+            return key
+
+    return "hey_jarvis"
+
+
+def _ensure_openwakeword_resource(file_path, url):
+    if os.path.exists(file_path):
+        return
+
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    urllib.request.urlretrieve(url, file_path)
+
+
+def _ensure_openwakeword_models(model_name, inference_framework="onnx"):
+    ext = ".onnx" if str(inference_framework).lower() == "onnx" else ".tflite"
+
+    # Feature models required by the internal audio preprocessor.
+    for _, spec in openwakeword.FEATURE_MODELS.items():
+        base_path = str(spec.get("model_path", "") or "")
+        if not base_path:
+            continue
+        target_path = base_path.replace(".tflite", ext)
+        target_url = str(spec.get("download_url", "") or "").replace(".tflite", ext)
+        _ensure_openwakeword_resource(target_path, target_url)
+
+    # Selected wakeword model only.
+    key = _wakeword_model_key(model_name)
+    spec = openwakeword.MODELS.get(key, {})
+    base_path = str(spec.get("model_path", "") or "")
+    base_url = str(spec.get("download_url", "") or "")
+    if not base_path or not base_url:
+        raise ValueError(f"Unknown wakeword model key: {key}")
+
+    target_path = base_path.replace(".tflite", ext)
+    target_url = base_url.replace(".tflite", ext)
+    _ensure_openwakeword_resource(target_path, target_url)
+
+    return key
+
+
 def get_genai_client():
     global _client, _client_api_key
 
@@ -381,6 +455,7 @@ def _build_live_config(voice_name: str, ai_display_name: str | None = None, pers
             "If the user asks to remember/save a fact, call save_to_memory. "
             "If the user asks for long-term memory state/status, call memory_status. "
             "If the user asks for a memory check or wants the memory report in detail view, call show_memory_quality_view. "
+            "If the user clearly indicates the conversation is finished (for example: 'das waere alles', 'ok danke das war's', 'that's all'), call mute_assistant. "
             "When answering, respond using complete and concise sentences to keep a quick pacing and keep the conversation flowing.",
         tools=tools,
         speech_config=types.SpeechConfig(
@@ -453,6 +528,8 @@ class AudioLoop:
         # Track last transcription text to calculate deltas (Gemini sends cumulative text)
         self._last_input_transcription = ""
         self._last_output_transcription = ""
+        self._last_user_text_for_auto_mute = ""
+        self._auto_mute_triggered_for_turn = False
 
         self.audio_in_queue = None
         self.out_queue = None
@@ -517,6 +594,18 @@ class AudioLoop:
         }
         if self.long_term_memory_enabled:
             self._ensure_memory_agent()
+
+        wakeword_settings = resolve_wakeword_settings()
+        self.wakeword_enabled = bool(wakeword_settings.get("enabled", False))
+        self.wakeword_model_name = str(wakeword_settings.get("model_name", "hey_jarvis") or "hey_jarvis")
+        self.wakeword_threshold = float(wakeword_settings.get("threshold", 0.55))
+        self._wakeword_model = None
+        self._wakeword_last_trigger_at = 0.0
+        self._wakeword_armed_at = 0.0
+        self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
+
+        if self.wakeword_enabled:
+            self._init_wakeword_model()
         
         # Sync Initial Project State
         if self.on_project_update:
@@ -624,6 +713,133 @@ class AudioLoop:
 
     def set_memory_locked(self, locked):
         self.memory_locked = bool(locked)
+
+    def _init_wakeword_model(self):
+        if not self.wakeword_enabled:
+            self._wakeword_model = None
+            self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
+            return
+
+        try:
+            selected_key = _ensure_openwakeword_models(self.wakeword_model_name, inference_framework="onnx")
+            self.wakeword_model_name = selected_key
+            self._wakeword_model = OpenWakeWordModel(
+                wakeword_models=[selected_key],
+                inference_framework="onnx",
+            )
+            self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
+            print(f"[ADA] Wake word detector initialized (model={self.wakeword_model_name}, threshold={self.wakeword_threshold:.2f}).")
+        except Exception as e:
+            self._wakeword_model = None
+            print(f"[ADA] Wake word detector init failed: {e}")
+
+    def set_wakeword_config(self, enabled=None, threshold=None, model_name=None):
+        if enabled is not None:
+            self.wakeword_enabled = bool(enabled)
+
+        if threshold is not None:
+            try:
+                threshold_value = float(threshold)
+            except (TypeError, ValueError):
+                threshold_value = self.wakeword_threshold
+            self.wakeword_threshold = max(0.1, min(0.99, threshold_value))
+
+        if model_name is not None:
+            value = str(model_name or "").strip()
+            if value:
+                self.wakeword_model_name = value
+
+        self._init_wakeword_model()
+
+    def _extract_wakeword_score(self, value):
+        if isinstance(value, np.ndarray):
+            if value.size == 0:
+                return 0.0
+            return float(value.ravel()[-1])
+        if isinstance(value, (list, tuple)):
+            if not value:
+                return 0.0
+            try:
+                return float(value[-1])
+            except (TypeError, ValueError):
+                return 0.0
+        if isinstance(value, dict):
+            # Some wrappers return metadata dicts that include "score".
+            try:
+                return float(value.get("score", 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _wakeword_match_score(self, prediction_dict):
+        if not isinstance(prediction_dict, dict) or not prediction_dict:
+            return None, 0.0
+
+        desired = str(self.wakeword_model_name or "").strip().lower()
+        if desired:
+            for key, value in prediction_dict.items():
+                key_norm = str(key or "").strip().lower()
+                if desired in key_norm:
+                    return str(key), self._extract_wakeword_score(value)
+
+        best_key = None
+        best_score = 0.0
+        for key, value in prediction_dict.items():
+            score = self._extract_wakeword_score(value)
+            if best_key is None or score > best_score:
+                best_key = str(key)
+                best_score = score
+
+        return best_key, best_score
+
+    def _handle_wakeword_from_chunk(self, chunk_bytes):
+        if not (self.paused and self.wakeword_enabled and self._wakeword_model):
+            return False
+
+        now = time.time()
+        if now < self._wakeword_armed_at:
+            return False
+        if now - self._wakeword_last_trigger_at < 2.0:
+            return False
+
+        try:
+            audio_i16 = np.frombuffer(chunk_bytes, dtype=np.int16)
+            if audio_i16.size == 0:
+                return False
+            self._wakeword_pcm_buffer = np.concatenate((self._wakeword_pcm_buffer, audio_i16))
+
+            while self._wakeword_pcm_buffer.size >= WAKEWORD_FRAME_SAMPLES:
+                frame = self._wakeword_pcm_buffer[:WAKEWORD_FRAME_SAMPLES]
+                self._wakeword_pcm_buffer = self._wakeword_pcm_buffer[WAKEWORD_FRAME_SAMPLES:]
+
+                prediction = self._wakeword_model.predict(frame)
+                model_name, score = self._wakeword_match_score(prediction)
+                if score < self.wakeword_threshold:
+                    continue
+
+                self._wakeword_last_trigger_at = now
+                self.set_paused(False)
+
+                matched_name = model_name or self.wakeword_model_name or "wakeword"
+                print(f"[ADA] Wake word detected: {matched_name} ({score:.3f})")
+                if self.on_status:
+                    self.on_status(
+                        {
+                            "msg": "Audio Resumed",
+                            "source": "wakeword",
+                            "wakeword": matched_name,
+                            "score": round(float(score), 3),
+                        }
+                    )
+                return True
+
+            return False
+        except Exception as e:
+            print(f"[ADA] Wake word inference error: {e}")
+            return False
 
     def _normalize_memory_label(self, value, fallback="general"):
         raw = str(value or "").strip().lower()
@@ -959,7 +1175,86 @@ class AudioLoop:
         return report
 
     def set_paused(self, paused):
-        self.paused = paused
+        self.paused = bool(paused)
+        # Drop stale buffered audio when pause state changes to avoid delayed triggers.
+        self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
+        if self.paused:
+            self._wakeword_armed_at = time.time() + WAKEWORD_ARM_DELAY_SECONDS
+        else:
+            self._wakeword_armed_at = 0.0
+
+    @staticmethod
+    def _normalize_text_for_match(text):
+        return str(text or "").strip().lower()
+
+    def _user_signaled_conversation_done(self, user_text: str):
+        text = self._normalize_text_for_match(user_text)
+        if not text:
+            return False
+
+        closure_markers = [
+            "nichts",
+            "nix",
+            "das wars",
+            "das war's",
+            "das waere alles",
+            "das wäre alles",
+            "mehr nicht",
+            "sonst nichts",
+            "ok danke",
+            "okay danke",
+            "passt danke",
+            "danke das wars",
+            "thank you that's all",
+            "thats all",
+            "that's all",
+            "nothing else",
+            "bye",
+            "tschuess",
+            "tschüss",
+        ]
+        return any(marker in text for marker in closure_markers)
+
+    def _assistant_sent_signoff(self, assistant_text: str):
+        text = self._normalize_text_for_match(assistant_text)
+        if not text:
+            return False
+
+        signoff_markers = [
+            "melde dich einfach",
+            "wenn du wieder etwas brauchst",
+            "gern geschehen",
+            "alles klar",
+            "bis dann",
+            "bis spaeter",
+            "bis später",
+            "ich bin da wenn",
+            "ich bin da, wenn",
+            "mach's gut",
+            "machs gut",
+            "see you",
+            "let me know if you need",
+            "happy to help",
+        ]
+
+        return any(marker in text for marker in signoff_markers)
+
+    def _try_auto_mute_after_signoff(self, assistant_text: str):
+        if self.paused:
+            return
+        if self._auto_mute_triggered_for_turn:
+            return
+
+        if not self._user_signaled_conversation_done(self._last_user_text_for_auto_mute):
+            return
+        if not self._assistant_sent_signoff(assistant_text):
+            return
+
+        self.set_paused(True)
+        self._auto_mute_triggered_for_turn = True
+        if callable(self.on_status):
+            self.on_status("Audio Paused")
+        print("[ADA DEBUG] [AUTO-MUTE] Conversation closure detected -> muted.")
 
     def stop(self):
         self.stop_event.set()
@@ -1595,12 +1890,13 @@ class AudioLoop:
         SILENCE_DURATION = 0.5 # Seconds of silence to consider "done speaking"
         
         while True:
-            if self.paused:
-                await asyncio.sleep(0.1)
-                continue
-
             try:
                 data = await asyncio.to_thread(self.audio_stream.read, CHUNK_SIZE, **kwargs)
+
+                # Keep wakeword listener active while muted for handsfree resume.
+                if self.paused:
+                    self._handle_wakeword_from_chunk(data)
+                    continue
                 
                 # 1. Send Audio
                 if self.out_queue:
@@ -1833,6 +2129,8 @@ class AudioLoop:
                         if response.server_content.input_transcription:
                             transcript = response.server_content.input_transcription.text
                             if transcript:
+                                self._last_user_text_for_auto_mute = str(transcript)
+                                self._auto_mute_triggered_for_turn = False
                                 if self.chat_buffer["sender"] != "User":
                                     if self.chat_buffer["sender"] and self.chat_buffer["text"].strip():
                                         self.flush_chat()
@@ -1869,6 +2167,7 @@ class AudioLoop:
                                             else:
                                                 # Transcript revision from model: replace current text.
                                                 self.chat_buffer["text"] = transcript
+                                        self._try_auto_mute_after_signoff(self.chat_buffer["text"])
                         
                         if response.server_content.output_transcription:
                             transcript = response.server_content.output_transcription.text
@@ -3288,6 +3587,22 @@ class AudioLoop:
                                         })
                                     except Exception as e:
                                         result_str = f"Spotify Device-Wechsel fehlgeschlagen. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "mute_assistant":
+                                    try:
+                                        self.set_paused(True)
+                                        if callable(self.on_status):
+                                            self.on_status("Audio Paused")
+                                        result_str = "Assistant wurde stummgeschaltet. Nutze den Mute-Button zum Entstummen."
+                                    except Exception as e:
+                                        result_str = f"Assistant konnte nicht stummgeschaltet werden. Details: {str(e)}"
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,
