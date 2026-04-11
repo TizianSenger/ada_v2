@@ -124,7 +124,9 @@ const ModeHeader = ({ activeMode, toolPermissions = {} }) => {
                 isToolEnabled('spotify_resume') ||
                 isToolEnabled('spotify_next') ||
                 isToolEnabled('spotify_previous') ||
-                isToolEnabled('spotify_set_playback_mode')
+                isToolEnabled('spotify_set_playback_mode') ||
+                isToolEnabled('spotify_list_devices') ||
+                isToolEnabled('spotify_transfer_playback')
             );
         }
         if (id === 'system') {
@@ -684,15 +686,29 @@ const SpotifyView = ({ payload }) => {
     const playlistsPayload = spotify?.playlists || {};
     const favoritesPayload = spotify?.favorites || {};
     const daylistPayload = spotify?.daylist || {};
+    const devicesPayload = spotify?.devices || {};
 
     const searchTracks = Array.isArray(search?.tracks) ? search.tracks : [];
     const playlists = Array.isArray(playlistsPayload?.playlists) ? playlistsPayload.playlists : [];
     const favorites = Array.isArray(favoritesPayload?.tracks) ? favoritesPayload.tracks : [];
     const daylistTracks = Array.isArray(daylistPayload?.tracks) ? daylistPayload.tracks : [];
+    const devices = Array.isArray(devicesPayload?.devices) ? devicesPayload.devices : [];
 
     const hasPlayback = playback && typeof playback === 'object' && Object.keys(playback).length > 0;
     const track = hasPlayback ? (playback.track || {}) : {};
     const device = hasPlayback ? (playback.device || {}) : {};
+    const progressMs = Number(playback?.progress_ms || 0);
+    const durationMs = Number(track?.duration_ms || 0);
+    const progressPct = durationMs > 0 ? Math.max(0, Math.min(100, (progressMs / durationMs) * 100)) : 0;
+
+    const formatMs = (ms) => {
+        const n = Number(ms);
+        if (!Number.isFinite(n) || n < 0) return '0:00';
+        const sec = Math.floor(n / 1000);
+        const min = Math.floor(sec / 60);
+        const rem = sec % 60;
+        return `${min}:${String(rem).padStart(2, '0')}`;
+    };
 
     return (
         <div className="h-full w-full flex flex-col overflow-hidden">
@@ -707,20 +723,47 @@ const SpotifyView = ({ payload }) => {
 
             <div className="flex-1 overflow-auto scrollbar-hide p-3 space-y-3">
                 {hasPlayback && (
-                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div className="border border-cyan-500/25 rounded-xl p-3 bg-gradient-to-br from-cyan-950/30 via-black/40 to-black/35 shadow-[0_0_22px_rgba(34,211,238,0.14)] premium-spotify-shell">
                         <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Now Playing</div>
-                        <div className="text-cyan-100/90 text-sm mt-1">{track?.name || 'n/a'}</div>
-                        <div className="text-cyan-300/80 text-xs mt-1">{Array.isArray(track?.artists) ? track.artists.join(', ') : 'n/a'}</div>
-                        <div className="text-cyan-500/80 text-[11px] mt-1">Album: {track?.album || 'n/a'}</div>
+                        <div className="mt-2 grid grid-cols-1 sm:grid-cols-[84px_1fr] gap-3 items-start">
+                            <div className="w-[84px] h-[84px] rounded-lg border border-cyan-900/45 bg-black/40 overflow-hidden flex items-center justify-center premium-spotify-card">
+                                {track?.image_url ? (
+                                    <img src={track.image_url} alt="Spotify Cover" className="w-full h-full object-cover" />
+                                ) : (
+                                    <div className="text-[10px] text-cyan-500/60">No Cover</div>
+                                )}
+                            </div>
+                            <div className="min-w-0 premium-spotify-card rounded-lg border border-cyan-900/35 bg-cyan-950/10 p-2.5">
+                                <div className="text-cyan-100/95 text-sm font-semibold truncate">{track?.name || 'n/a'}</div>
+                                <div className="text-cyan-300/85 text-xs mt-1 truncate">{Array.isArray(track?.artists) ? track.artists.join(', ') : 'n/a'}</div>
+                                <div className="text-cyan-500/80 text-[11px] mt-1 truncate">Album: {track?.album || 'n/a'}</div>
+                                <div className="mt-2 spotify-progress-rail h-2 rounded-full border border-cyan-900/50 bg-cyan-950/50 overflow-hidden">
+                                    <div className="spotify-progress-fill h-full bg-gradient-to-r from-cyan-400 via-sky-300 to-emerald-400" style={{ width: `${progressPct}%` }} />
+                                </div>
+                                <div className="mt-1 flex items-center justify-between text-[10px] text-cyan-300/80">
+                                    <span>{formatMs(progressMs)}</span>
+                                    <span>{formatMs(durationMs)}</span>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${playback?.shuffle_state ? 'border-cyan-400/50 bg-cyan-500/10 text-cyan-200' : 'border-cyan-900/60 bg-black/30 text-cyan-500/70'}`}>
+                                        Shuffle: {playback?.shuffle_state ? 'On' : 'Off'}
+                                    </span>
+                                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${String(playback?.repeat_state || 'off') !== 'off' ? 'border-cyan-400/50 bg-cyan-500/10 text-cyan-200' : 'border-cyan-900/60 bg-black/30 text-cyan-500/70'}`}>
+                                        Repeat: {String(playback?.repeat_state || 'off')}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="text-cyan-500/80 text-[11px] mt-2">Device: {device?.name || 'n/a'} ({device?.type || 'n/a'})</div>
                     </div>
                 )}
 
                 {searchTracks.length > 0 && (
-                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div className="border border-cyan-900/40 rounded-xl p-2.5 bg-gradient-to-br from-cyan-950/12 to-black/35 premium-spotify-card">
                         <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Search Results</div>
                         <div className="mt-2 space-y-1">
                             {searchTracks.slice(0, 10).map((item) => (
-                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90">
+                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90 border border-cyan-900/25 rounded px-2 py-1 bg-black/20 hover:bg-cyan-950/20 transition-colors duration-200">
                                     {item?.name || 'Unknown'} - {Array.isArray(item?.artists) ? item.artists.join(', ') : 'n/a'}
                                 </div>
                             ))}
@@ -729,11 +772,11 @@ const SpotifyView = ({ payload }) => {
                 )}
 
                 {playlists.length > 0 && (
-                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div className="border border-cyan-900/40 rounded-xl p-2.5 bg-gradient-to-br from-cyan-950/12 to-black/35 premium-spotify-card">
                         <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Playlists</div>
                         <div className="mt-2 space-y-1">
                             {playlists.slice(0, 12).map((item) => (
-                                <div key={item?.id || item?.name} className="text-[11px] text-cyan-100/90">
+                                <div key={item?.id || item?.name} className="text-[11px] text-cyan-100/90 border border-cyan-900/25 rounded px-2 py-1 bg-black/20 hover:bg-cyan-950/20 transition-colors duration-200">
                                     {item?.name || 'Unknown'} ({item?.tracks_total ?? 0})
                                 </div>
                             ))}
@@ -742,11 +785,11 @@ const SpotifyView = ({ payload }) => {
                 )}
 
                 {favorites.length > 0 && (
-                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div className="border border-cyan-900/40 rounded-xl p-2.5 bg-gradient-to-br from-cyan-950/12 to-black/35 premium-spotify-card">
                         <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Favorites</div>
                         <div className="mt-2 space-y-1">
                             {favorites.slice(0, 12).map((item) => (
-                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90">
+                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90 border border-cyan-900/25 rounded px-2 py-1 bg-black/20 hover:bg-cyan-950/20 transition-colors duration-200">
                                     {item?.name || 'Unknown'} - {Array.isArray(item?.artists) ? item.artists.join(', ') : 'n/a'}
                                 </div>
                             ))}
@@ -755,11 +798,11 @@ const SpotifyView = ({ payload }) => {
                 )}
 
                 {daylistTracks.length > 0 && (
-                    <div className="border border-cyan-900/40 rounded-lg p-2 bg-black/35">
+                    <div className="border border-cyan-900/40 rounded-xl p-2.5 bg-gradient-to-br from-cyan-950/12 to-black/35 premium-spotify-card">
                         <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Daylist</div>
                         <div className="mt-2 space-y-1">
                             {daylistTracks.slice(0, 12).map((item) => (
-                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90">
+                                <div key={item?.uri || item?.id || item?.name} className="text-[11px] text-cyan-100/90 border border-cyan-900/25 rounded px-2 py-1 bg-black/20 hover:bg-cyan-950/20 transition-colors duration-200">
                                     {item?.name || 'Unknown'} - {Array.isArray(item?.artists) ? item.artists.join(', ') : 'n/a'}
                                 </div>
                             ))}
@@ -767,7 +810,20 @@ const SpotifyView = ({ payload }) => {
                     </div>
                 )}
 
-                {!hasPlayback && searchTracks.length === 0 && playlists.length === 0 && favorites.length === 0 && daylistTracks.length === 0 && (
+                {devices.length > 0 && (
+                    <div className="border border-cyan-900/40 rounded-xl p-2.5 bg-gradient-to-br from-cyan-950/12 to-black/35 premium-spotify-card">
+                        <div className="text-cyan-300 text-xs uppercase tracking-wider font-semibold">Devices</div>
+                        <div className="mt-2 space-y-1">
+                            {devices.slice(0, 12).map((item) => (
+                                <div key={item?.id || item?.name} className={`text-[11px] border rounded px-2 py-1 transition-colors duration-200 ${item?.is_active ? 'text-emerald-200 border-emerald-500/30 bg-emerald-500/12' : 'text-cyan-100/90 border-cyan-900/25 bg-black/20 hover:bg-cyan-950/20'}`}>
+                                    {item?.is_active ? '[AKTIV] ' : ''}{item?.name || 'Unknown'} ({item?.type || 'n/a'})
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {!hasPlayback && searchTracks.length === 0 && playlists.length === 0 && favorites.length === 0 && daylistTracks.length === 0 && devices.length === 0 && (
                     <div className="text-xs text-cyan-400/70">Keine Spotify Detaildaten vorhanden.</div>
                 )}
             </div>

@@ -1922,8 +1922,6 @@ class AudioLoop:
                                 
                                 # Permission model: True = enabled, False = disabled.
                                 tool_enabled = self.tool_enabled.get(fc.name, True)
-                                if fc.name == "clear_detail_view":
-                                    tool_enabled = True
 
                                 if not tool_enabled:
                                     if fc.name == "memory_status" and self.tool_enabled.get("show_memory_quality_view", True):
@@ -1965,8 +1963,6 @@ class AudioLoop:
                                     continue
                                 # Ask-for-permission logic is independent from enabled/disabled.
                                 ask_confirmation = self.tool_confirmation.get(fc.name, True)
-                                if fc.name == "clear_detail_view":
-                                    ask_confirmation = False
                                 if ask_confirmation:
                                     if not self.on_tool_confirmation:
                                         print(
@@ -3217,6 +3213,81 @@ class AudioLoop:
                                         result_str = f"Spotify Playback-Modus aktualisiert: {mode_result}."
                                     except Exception as e:
                                         result_str = f"Spotify Playback-Modus konnte nicht gesetzt werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_list_devices":
+                                    try:
+                                        devices_payload = await asyncio.to_thread(
+                                            self.spotify_agent.list_devices,
+                                        )
+
+                                        rows = devices_payload.get("devices", []) or []
+                                        if not rows:
+                                            result_str = "Keine Spotify Geraete gefunden. Oeffne Spotify auf Handy/Laptop und versuche es erneut."
+                                        else:
+                                            lines = []
+                                            for row in rows:
+                                                marker = "[AKTIV] " if row.get("is_active") else ""
+                                                lines.append(
+                                                    f"- {marker}{row.get('name', 'Unknown')} ({row.get('type', 'n/a')}) [ID: {row.get('id', '')}]"
+                                                )
+                                            result_str = "Spotify Geraete:\n" + "\n".join(lines)
+
+                                        self.emit_tool_view({
+                                            "type": "spotify",
+                                            "title": "Spotify Devices",
+                                            "spotify": {
+                                                "devices": devices_payload,
+                                            },
+                                        })
+                                    except Exception as e:
+                                        result_str = f"Spotify Geraete konnten nicht geladen werden. Details: {str(e)}"
+
+                                    function_response = types.FunctionResponse(
+                                        id=fc.id,
+                                        name=fc.name,
+                                        response={"result": result_str}
+                                    )
+                                    function_responses.append(function_response)
+
+                                elif fc.name == "spotify_transfer_playback":
+                                    device = str(fc.args.get("device", "") or "").strip()
+                                    play = fc.args.get("play", None)
+
+                                    try:
+                                        moved = await asyncio.to_thread(
+                                            self.spotify_agent.transfer_playback,
+                                            device,
+                                            play,
+                                        )
+                                        active = moved.get("active_device", {}) or {}
+                                        result_str = (
+                                            "Spotify Device gewechselt: "
+                                            f"{active.get('name', 'Unknown')} ({active.get('type', 'n/a')})."
+                                        )
+
+                                        try:
+                                            playback = await asyncio.to_thread(self.spotify_agent.get_playback_status)
+                                        except Exception:
+                                            playback = {}
+
+                                        devices_payload = await asyncio.to_thread(self.spotify_agent.list_devices)
+                                        self.emit_tool_view({
+                                            "type": "spotify",
+                                            "title": "Spotify Device Switch",
+                                            "spotify": {
+                                                "playback": playback,
+                                                "devices": devices_payload,
+                                            },
+                                        })
+                                    except Exception as e:
+                                        result_str = f"Spotify Device-Wechsel fehlgeschlagen. Details: {str(e)}"
 
                                     function_response = types.FunctionResponse(
                                         id=fc.id,

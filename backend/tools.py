@@ -603,6 +603,34 @@ _spotify_set_playback_mode_tool = {
     }
 }
 
+_spotify_list_devices_tool = {
+    "name": "spotify_list_devices",
+    "description": "List available Spotify playback devices and show which one is currently active.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {}
+    }
+}
+
+_spotify_transfer_playback_tool = {
+    "name": "spotify_transfer_playback",
+    "description": "Transfer Spotify playback to a specific device (e.g. laptop or phone).",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "device": {
+                "type": "STRING",
+                "description": "Spotify device name or device ID to activate."
+            },
+            "play": {
+                "type": "BOOLEAN",
+                "description": "Optional: true to start playback immediately after transfer."
+            }
+        },
+        "required": ["device"]
+    }
+}
+
 _route_plan_tool = {
     "name": "route_plan",
     "description": "Plan a route for driving by car using free OpenStreetMap services (Nominatim + OSRM) and return data for detail view map display.",
@@ -1078,6 +1106,8 @@ function_declarations = [
     _spotify_next_tool,
     _spotify_previous_tool,
     _spotify_set_playback_mode_tool,
+    _spotify_list_devices_tool,
+    _spotify_transfer_playback_tool,
     _route_plan_tool,
     _get_whatsapp_unread_tool,
     _show_whatsapp_detail_view_tool,

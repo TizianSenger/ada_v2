@@ -155,6 +155,73 @@ body {
   animation: breathe 4.5s ease-in-out infinite;
 }
 
+@keyframes spotifyDiscSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spotify-disc-spin {
+  animation: spotifyDiscSpin 8s linear infinite;
+}
+
+@keyframes spotifyShellGlow {
+  0% {
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.12);
+  }
+
+  50% {
+    box-shadow: 0 0 30px rgba(34, 211, 238, 0.2);
+  }
+
+  100% {
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.12);
+  }
+}
+
+.premium-spotify-shell {
+  animation: spotifyShellGlow 4.2s ease-in-out infinite;
+}
+
+.premium-spotify-card {
+  transition: transform 180ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.premium-spotify-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(103, 232, 249, 0.38);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.18);
+}
+
+@keyframes spotifyProgressMove {
+  0% {
+    background-position: 0% 0;
+    filter: brightness(0.95);
+  }
+
+  50% {
+    filter: brightness(1.08);
+  }
+
+  100% {
+    background-position: 140% 0;
+    filter: brightness(0.95);
+  }
+}
+
+.spotify-progress-rail {
+  position: relative;
+}
+
+.spotify-progress-fill {
+  background-size: 160% 100%;
+  animation: spotifyProgressMove 2.8s linear infinite;
+}
+
 .boot-overlay {
   --boot-bg-0: #02070a;
   --boot-bg-1: #04131a;

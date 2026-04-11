@@ -7,6 +7,7 @@ import CadWindow from './components/CadWindow';
 import BrowserWindow from './components/BrowserWindow';
 import ChatModule from './components/ChatModule';
 import ToolsModule from './components/ToolsModule';
+import SpotifyPlayerViewer from './components/SpotifyPlayerViewer';
 import { Mic, MicOff, Settings, X, Power, Video, VideoOff, Layout, Hand, Printer, Clock, Gauge, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
 // MemoryPrompt removed - memory is now actively saved to project
@@ -95,6 +96,7 @@ function App() {
     const [quotaModels, setQuotaModels] = useState({});
     const [isQuotaChecking, setIsQuotaChecking] = useState(false);
     const [leftPanelView, setLeftPanelView] = useState(null);
+    const [spotifyPlayerState, setSpotifyPlayerState] = useState(null);
     const [selectedMemoryRoomFilter, setSelectedMemoryRoomFilter] = useState(null);
 
 
@@ -215,6 +217,7 @@ function App() {
     const stockViewQueueRef = useRef([]);
     const stockViewTimerRef = useRef(null);
     const stockViewActiveRef = useRef(false);
+    const spotifyPlayerPollRef = useRef(null);
     const leftPanelViewRef = useRef(null);
     const smartHomeToolsEnabledRef = useRef(true);
     const printerToolsEnabledRef = useRef(true);
@@ -560,6 +563,13 @@ function App() {
     const isWebAgentToolsEnabled =
         isToolEnabled('run_web_agent') ||
         isToolEnabled('show_last_web_result');
+    const isSpotifyToolsEnabled =
+        isToolEnabled('spotify_get_playback_status') ||
+        isToolEnabled('spotify_play') ||
+        isToolEnabled('spotify_resume') ||
+        isToolEnabled('spotify_pause') ||
+        isToolEnabled('spotify_next') ||
+        isToolEnabled('spotify_previous');
 
     useEffect(() => {
         whatsappToolsEnabledRef.current = isWhatsAppToolsEnabled;
@@ -1019,6 +1029,21 @@ function App() {
             }
         });
 
+        socket.on('spotify_player_state', (data) => {
+            if (!data?.ok || !data?.state) {
+                setSpotifyPlayerState(null);
+                return;
+            }
+            setSpotifyPlayerState(data.state);
+        });
+
+        socket.on('spotify_player_action_result', (data) => {
+            if (data?.message) {
+                addMessage('System', String(data.message));
+            }
+            socket.emit('get_spotify_player_state', { next_limit: 2 });
+        });
+
         socket.on('whatsapp_tool_request', async (data) => {
             if (!whatsappToolsEnabledRef.current) {
                 const requestId = String(data?.request_id || '').trim();
@@ -1268,10 +1293,16 @@ function App() {
             socket.off('left_panel_view');
             socket.off('whatsapp_tool_request');
             socket.off('backup_pin_result');
+            socket.off('spotify_player_state');
+            socket.off('spotify_player_action_result');
 
             if (stockViewTimerRef.current) {
                 clearTimeout(stockViewTimerRef.current);
                 stockViewTimerRef.current = null;
+            }
+            if (spotifyPlayerPollRef.current) {
+                clearInterval(spotifyPlayerPollRef.current);
+                spotifyPlayerPollRef.current = null;
             }
             stockViewQueueRef.current = [];
             stockViewActiveRef.current = false;
@@ -1279,6 +1310,30 @@ function App() {
             stopVideo();
         };
     }, []);
+
+    useEffect(() => {
+        if (spotifyPlayerPollRef.current) {
+            clearInterval(spotifyPlayerPollRef.current);
+            spotifyPlayerPollRef.current = null;
+        }
+
+        if (!socketConnected || !isSpotifyToolsEnabled) {
+            setSpotifyPlayerState(null);
+            return undefined;
+        }
+
+        socket.emit('get_spotify_player_state', { next_limit: 2 });
+        spotifyPlayerPollRef.current = setInterval(() => {
+            socket.emit('get_spotify_player_state', { next_limit: 2 });
+        }, 2200);
+
+        return () => {
+            if (spotifyPlayerPollRef.current) {
+                clearInterval(spotifyPlayerPollRef.current);
+                spotifyPlayerPollRef.current = null;
+            }
+        };
+    }, [socketConnected, isSpotifyToolsEnabled]);
 
     useEffect(() => {
         ipcRenderer.send('whatsapp-config', {
@@ -2193,6 +2248,11 @@ function App() {
         setShowBrowserWindow(!showBrowserWindow);
     };
 
+    const handleAddCurrentSpotifyToFavorites = () => {
+        if (!socketConnected) return;
+        socket.emit('spotify_add_current_to_favorites');
+    };
+
     const detailViewTop = elementPositions.visualizer.y - (elementSizes.visualizer.h / 2);
     const chatBottom = elementPositions.chat.y + elementSizes.chat.h;
     const detailViewHeight = Math.max(320, chatBottom - detailViewTop);
@@ -2204,6 +2264,12 @@ function App() {
         - (elementSizes.visualizer.w / 2)
         - detailViewGap
         - (detailViewWidth / 2);
+
+    const spotifyViewerVisible = Boolean(spotifyPlayerState?.is_available && spotifyPlayerState?.is_playing);
+    const toolsTopEdge = elementPositions.tools.y - Math.max(40, elementSizes.tools.h / 2);
+    const spotifyViewerPreferredTop = elementPositions.chat.y + elementSizes.chat.h + 10;
+    const spotifyViewerMaxTop = toolsTopEdge - 200;
+    const spotifyViewerTop = Math.max(14, Math.min(spotifyViewerPreferredTop, spotifyViewerMaxTop));
 
 
 
@@ -2633,6 +2699,22 @@ function App() {
                     height={elementSizes.chat.h}
                     onMouseDown={(e) => handleMouseDown(e, 'chat')}
                 />
+
+                {spotifyViewerVisible && (
+                    <div
+                        className="absolute z-20"
+                        style={{
+                            left: elementPositions.chat.x,
+                            top: spotifyViewerTop,
+                            transform: 'translate(-50%, 0)',
+                        }}
+                    >
+                        <SpotifyPlayerViewer
+                            playerState={spotifyPlayerState}
+                            onAddToFavorites={handleAddCurrentSpotifyToFavorites}
+                        />
+                    </div>
+                )}
 
                 {/* Footer Controls / Tools Module */}
                 <div className="z-20 flex justify-center pb-10 pointer-events-none">

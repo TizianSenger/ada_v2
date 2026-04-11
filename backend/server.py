@@ -129,6 +129,8 @@ DEFAULT_SETTINGS = {
         "spotify_next": True,
         "spotify_previous": True,
         "spotify_set_playback_mode": True,
+        "spotify_list_devices": True,
+        "spotify_transfer_playback": True,
         "clear_detail_view": False,
         "system_check": True,
         "search_memory": True,
@@ -194,11 +196,11 @@ spotify_agent = SpotifyAgent(settings_path=SETTINGS_FILE)
 
 
 def _enforce_tool_invariants():
-    # Closing detail view must always be possible for UX recovery.
+    # Detail clearing remains optional and should respect user tool settings.
     SETTINGS.setdefault("tool_enabled", {})
     SETTINGS.setdefault("tool_permissions", {})
-    SETTINGS["tool_enabled"]["clear_detail_view"] = True
-    SETTINGS["tool_permissions"]["clear_detail_view"] = False
+    SETTINGS["tool_enabled"].setdefault("clear_detail_view", False)
+    SETTINGS["tool_permissions"].setdefault("clear_detail_view", False)
 
 
 def _settings_for_client():
@@ -2062,6 +2064,66 @@ async def spotify_disconnect(sid, data=None):
         room=sid,
     )
     await sio.emit('settings', _settings_for_client(), room=sid)
+
+
+@sio.event
+async def get_spotify_player_state(sid, data=None):
+    payload = data or {}
+    next_limit_raw = payload.get("next_limit", 2)
+    try:
+        next_limit = int(next_limit_raw)
+    except Exception:
+        next_limit = 2
+    next_limit = max(1, min(5, next_limit))
+
+    try:
+        state = await asyncio.to_thread(spotify_agent.get_player_view, next_limit)
+        await sio.emit(
+            'spotify_player_state',
+            {
+                'ok': True,
+                'state': state,
+                'timestamp': datetime.now().isoformat(),
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'spotify_player_state',
+            {
+                'ok': False,
+                'state': None,
+                'message': f'Spotify player state unavailable: {str(e)}',
+                'timestamp': datetime.now().isoformat(),
+            },
+            room=sid,
+        )
+
+
+@sio.event
+async def spotify_add_current_to_favorites(sid, data=None):
+    try:
+        result = await asyncio.to_thread(spotify_agent.add_current_to_favorites)
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': True,
+                'action': 'add_current_to_favorites',
+                'result': result,
+                'message': 'Current track added to Spotify favorites.',
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': False,
+                'action': 'add_current_to_favorites',
+                'message': f'Failed to add current track to favorites: {str(e)}',
+            },
+            room=sid,
+        )
 
 @sio.event
 async def update_settings(sid, data):

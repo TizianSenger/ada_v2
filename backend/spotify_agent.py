@@ -277,6 +277,15 @@ class SpotifyAgent:
                     self._store_last_device_id(d.get("id"))
                     return d.get("id")
 
+            # Friendly matching for natural language device names (e.g. "handy", "laptop").
+            contains_matches = [
+                d for d in devices
+                if target in str(d.get("name", "") or "").strip().lower()
+            ]
+            if len(contains_matches) == 1:
+                self._store_last_device_id(contains_matches[0].get("id"))
+                return contains_matches[0].get("id")
+
         active = next((d for d in devices if bool(d.get("is_active", False))), None)
         if active:
             self._store_last_device_id(active.get("id"))
@@ -307,6 +316,48 @@ class SpotifyAgent:
 
         return {}
 
+    def _list_devices(self, sp):
+        payload = sp.devices() or {}
+        devices = payload.get("devices", []) or []
+
+        rows = []
+        for d in devices:
+            rows.append(
+                {
+                    "id": d.get("id"),
+                    "name": d.get("name"),
+                    "type": d.get("type"),
+                    "is_active": bool(d.get("is_active", False)),
+                    "is_restricted": bool(d.get("is_restricted", False)),
+                    "is_private_session": bool(d.get("is_private_session", False)),
+                    "volume_percent": d.get("volume_percent"),
+                    "supports_volume": bool(d.get("supports_volume", False)),
+                }
+            )
+        return rows
+
+    def _verify_device_active(self, sp, target_device_id: str, timeout_seconds: float = 5.0, interval_seconds: float = 0.35):
+        target = str(target_device_id or "").strip()
+        if not target:
+            raise RuntimeError("Kein Spotify Device fuer Wechsel ausgewaehlt.")
+
+        deadline = time.time() + max(0.5, float(timeout_seconds))
+        last_rows = []
+        while time.time() < deadline:
+            last_rows = self._list_devices(sp)
+            active = next((d for d in last_rows if bool(d.get("is_active", False))), None)
+            if active and str(active.get("id", "") or "").strip() == target:
+                return active
+            time.sleep(max(0.1, float(interval_seconds)))
+
+        active = next((d for d in last_rows if bool(d.get("is_active", False))), None)
+        if active:
+            raise RuntimeError(
+                "Spotify Wiedergabe wurde nicht auf das gewuenschte Device umgeschaltet. "
+                f"Aktiv ist weiterhin: {active.get('name', 'Unbekannt')} ({active.get('type', 'n/a')})."
+            )
+        raise RuntimeError("Spotify Device-Wechsel konnte nicht verifiziert werden.")
+
     def _extract_track_id(self, playback: dict):
         if not isinstance(playback, dict):
             return ""
@@ -318,6 +369,66 @@ class SpotifyAgent:
             return ""
         item = playback.get("item") or {}
         return str(item.get("name", "") or "").strip()
+
+    def _extract_progress_ms(self, playback: dict):
+        if not isinstance(playback, dict):
+            return 0
+        try:
+            return int(playback.get("progress_ms", 0) or 0)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _did_progress_reset(before_ms: int, after_ms: int, min_before_ms: int = 7000, max_after_ms: int = 3500):
+        return int(before_ms or 0) >= int(min_before_ms) and int(after_ms or 0) <= int(max_after_ms)
+
+    def _pick_image_url(self, images):
+        rows = images if isinstance(images, list) else []
+        for row in rows:
+            url = str((row or {}).get("url", "") or "").strip()
+            if url:
+                return url
+        return ""
+
+    def _track_summary(self, item: dict):
+        source = item if isinstance(item, dict) else {}
+        album = source.get("album") or {}
+        artists = [str(a.get("name", "") or "").strip() for a in source.get("artists", []) or []]
+        external_urls = source.get("external_urls") or {}
+
+        return {
+            "id": source.get("id"),
+            "uri": source.get("uri"),
+            "name": source.get("name"),
+            "artists": [a for a in artists if a],
+            "album": album.get("name"),
+            "duration_ms": source.get("duration_ms"),
+            "image_url": self._pick_image_url(album.get("images") or []),
+            "external_url": str(external_urls.get("spotify", "") or "").strip(),
+        }
+
+    def _is_track_favorite(self, sp, track_id: str):
+        normalized = str(track_id or "").strip()
+        if not normalized:
+            return False
+
+        try:
+            result = sp.current_user_saved_tracks_contains([normalized]) or []
+            if isinstance(result, list) and result:
+                return bool(result[0])
+        except Exception:
+            return False
+        return False
+
+    def _queue_preview(self, sp, limit: int = 2):
+        final_limit = self._normalize_limit(limit, 2, 1, 5)
+        try:
+            queue_payload = sp.queue() or {}
+        except Exception:
+            return []
+
+        rows = queue_payload.get("queue", []) or []
+        return [self._track_summary(item) for item in rows[:final_limit]]
 
     def _verify_playback(self, sp, verifier, timeout_seconds: float = 2.8, interval_seconds: float = 0.35, device_id: str | None = None):
         deadline = time.time() + max(0.5, float(timeout_seconds))
@@ -343,11 +454,16 @@ class SpotifyAgent:
 
         item = playback.get("item") or {}
         device = playback.get("device") or {}
-        artists = [str(a.get("name", "") or "") for a in item.get("artists", []) or []]
+        track = self._track_summary(item)
+        track_id = str(track.get("id", "") or "").strip()
+        duration_ms = int(track.get("duration_ms", 0) or 0)
+        progress_ms = int(playback.get("progress_ms", 0) or 0)
+        progress_percent = (progress_ms / duration_ms * 100.0) if duration_ms > 0 else 0.0
 
         return {
             "is_playing": bool(playback.get("is_playing", False)),
-            "progress_ms": playback.get("progress_ms"),
+            "progress_ms": progress_ms,
+            "progress_percent": max(0.0, min(100.0, progress_percent)),
             "repeat_state": playback.get("repeat_state"),
             "shuffle_state": playback.get("shuffle_state"),
             "device": {
@@ -357,14 +473,89 @@ class SpotifyAgent:
                 "volume_percent": device.get("volume_percent"),
                 "is_active": bool(device.get("is_active", False)),
             },
-            "track": {
-                "id": item.get("id"),
-                "uri": item.get("uri"),
-                "name": item.get("name"),
-                "artists": [a for a in artists if a],
-                "album": (item.get("album") or {}).get("name"),
-                "duration_ms": item.get("duration_ms"),
+            "track": track,
+            "track_is_favorite": self._is_track_favorite(sp, track_id),
+        }
+
+    def list_devices(self):
+        sp = self._get_user_client()
+        devices = self._list_devices(sp)
+        active = next((d for d in devices if bool(d.get("is_active", False))), None)
+
+        return {
+            "count": len(devices),
+            "active_device": active or {},
+            "last_device_id": self._resolve_last_device_id(),
+            "devices": devices,
+        }
+
+    def transfer_playback(self, device: str, play=None):
+        sp = self._get_user_client()
+        target_device_id = self._resolve_device_id(sp, device)
+
+        force_play = bool(play) if play is not None else False
+        sp.transfer_playback(device_id=target_device_id, force_play=force_play)
+
+        active = self._verify_device_active(sp, target_device_id)
+        self._store_last_device_id(target_device_id)
+        return {
+            "ok": True,
+            "device_id": target_device_id,
+            "active_device": active,
+            "force_play": force_play,
+        }
+
+    def get_player_view(self, next_limit: int = 2):
+        sp = self._get_user_client()
+        playback = sp.current_playback() or {}
+
+        if not isinstance(playback, dict) or not playback:
+            return {
+                "is_available": False,
+                "is_playing": False,
+                "message": "No active Spotify playback.",
+                "track": {},
+                "next_tracks": [],
+            }
+
+        device = playback.get("device") or {}
+        track = self._track_summary(playback.get("item") or {})
+        track_id = str(track.get("id", "") or "").strip()
+        duration_ms = int(track.get("duration_ms", 0) or 0)
+        progress_ms = int(playback.get("progress_ms", 0) or 0)
+        progress_percent = (progress_ms / duration_ms * 100.0) if duration_ms > 0 else 0.0
+
+        return {
+            "is_available": True,
+            "is_playing": bool(playback.get("is_playing", False)),
+            "progress_ms": progress_ms,
+            "progress_percent": max(0.0, min(100.0, progress_percent)),
+            "repeat_state": playback.get("repeat_state"),
+            "shuffle_state": playback.get("shuffle_state"),
+            "device": {
+                "id": device.get("id"),
+                "name": device.get("name"),
+                "type": device.get("type"),
+                "volume_percent": device.get("volume_percent"),
+                "is_active": bool(device.get("is_active", False)),
             },
+            "track": track,
+            "track_is_favorite": self._is_track_favorite(sp, track_id),
+            "next_tracks": self._queue_preview(sp, next_limit),
+        }
+
+    def add_current_to_favorites(self):
+        sp = self._get_user_client()
+        playback = sp.current_playback() or {}
+        item = playback.get("item") or {}
+        track_id = str(item.get("id", "") or "").strip()
+        if not track_id:
+            raise RuntimeError("Kein aktiver Track verfuegbar.")
+
+        sp.current_user_saved_tracks_add([track_id])
+        return {
+            "ok": True,
+            "track_id": track_id,
         }
 
     def list_playlists(self, limit: int = 20):
@@ -640,15 +831,22 @@ class SpotifyAgent:
         device_id = self._resolve_device_id(sp, device)
         before = self._current_playback_for_device(sp, device_id)
         before_track_id = self._extract_track_id(before)
+        before_progress_ms = self._extract_progress_ms(before)
         sp.next_track(device_id=device_id)
         verified = self._verify_playback(
             sp,
             lambda pb: (
                 bool(pb)
                 and bool(self._extract_track_id(pb))
-                and self._extract_track_id(pb) != before_track_id,
+                and (
+                    self._extract_track_id(pb) != before_track_id
+                    or self._did_progress_reset(before_progress_ms, self._extract_progress_ms(pb))
+                    or (not before_track_id and bool(pb.get("is_playing", False)))
+                ),
                 "Spotify hat nicht auf den naechsten Titel gewechselt.",
             ),
+            timeout_seconds=6.0,
+            interval_seconds=0.4,
             device_id=device_id,
         )
         return {
@@ -663,15 +861,22 @@ class SpotifyAgent:
         device_id = self._resolve_device_id(sp, device)
         before = self._current_playback_for_device(sp, device_id)
         before_track_id = self._extract_track_id(before)
+        before_progress_ms = self._extract_progress_ms(before)
         sp.previous_track(device_id=device_id)
         verified = self._verify_playback(
             sp,
             lambda pb: (
                 bool(pb)
                 and bool(self._extract_track_id(pb))
-                and self._extract_track_id(pb) != before_track_id,
+                and (
+                    self._extract_track_id(pb) != before_track_id
+                    or self._did_progress_reset(before_progress_ms, self._extract_progress_ms(pb))
+                    or (not before_track_id and bool(pb.get("is_playing", False)))
+                ),
                 "Spotify hat nicht auf den vorherigen Titel gewechselt.",
             ),
+            timeout_seconds=6.0,
+            interval_seconds=0.4,
             device_id=device_id,
         )
         return {

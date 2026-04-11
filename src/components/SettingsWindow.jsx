@@ -42,6 +42,8 @@ const TOOLS = [
     { id: 'spotify_next', label: 'Spotify Next' },
     { id: 'spotify_previous', label: 'Spotify Previous' },
     { id: 'spotify_set_playback_mode', label: 'Spotify Set Playback Mode' },
+    { id: 'spotify_list_devices', label: 'Spotify List Devices' },
+    { id: 'spotify_transfer_playback', label: 'Spotify Transfer Playback' },
     { id: 'route_plan', label: 'Route Plan (Free)' },
     { id: 'get_whatsapp_unread', label: 'Get WhatsApp Unread' },
     { id: 'show_whatsapp_detail_view', label: 'Show WhatsApp Detail View' },
@@ -140,6 +142,8 @@ const TOOL_GROUPS = {
         'spotify_next',
         'spotify_previous',
         'spotify_set_playback_mode',
+        'spotify_list_devices',
+        'spotify_transfer_playback',
     ],
 };
 
@@ -164,6 +168,8 @@ const SPOTIFY_TOOL_IDS = [
     'spotify_next',
     'spotify_previous',
     'spotify_set_playback_mode',
+    'spotify_list_devices',
+    'spotify_transfer_playback',
 ];
 const ROUTE_TOOL_IDS = ['route_plan'];
 const FILE_PROJECT_TOOL_IDS = [
