@@ -44,7 +44,7 @@ const ChatModule = ({
                 className="flex flex-col gap-3 overflow-y-auto mb-4 scrollbar-hide mask-image-gradient relative z-10"
                 style={{ height: height ? `calc(${height}px - 70px)` : '15rem' }}
             >
-                {messages.slice(-5).map((msg, i) => (
+                {messages.slice(-30).map((msg, i) => (
                     <div
                         key={i}
                         className="text-sm border-l-2 border-cyan-800/50 pl-3 py-1 animate-fade-in-up"
