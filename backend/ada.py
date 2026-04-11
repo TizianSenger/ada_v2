@@ -38,6 +38,9 @@ RECEIVE_SAMPLE_RATE = 24000
 CHUNK_SIZE = 1024
 WAKEWORD_FRAME_SAMPLES = 1280
 WAKEWORD_ARM_DELAY_SECONDS = 1.2
+MANUAL_MUTE_WAKEWORD_GUARD_SECONDS = 6.0
+WAKEWORD_ARM_SILENCE_RMS = 220
+WAKEWORD_ARM_REQUIRED_SILENT_CHUNKS = 10
 
 MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_MODE = "camera"
@@ -603,6 +606,8 @@ class AudioLoop:
         self._wakeword_last_trigger_at = 0.0
         self._wakeword_armed_at = 0.0
         self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
+        self._wakeword_resume_armed = False
+        self._wakeword_silent_chunks = 0
 
         if self.wakeword_enabled:
             self._init_wakeword_model()
@@ -797,6 +802,8 @@ class AudioLoop:
 
     def _handle_wakeword_from_chunk(self, chunk_bytes):
         if not (self.paused and self.wakeword_enabled and self._wakeword_model):
+            return False
+        if not self._wakeword_resume_armed:
             return False
 
         now = time.time()
@@ -1178,10 +1185,21 @@ class AudioLoop:
         self.paused = bool(paused)
         # Drop stale buffered audio when pause state changes to avoid delayed triggers.
         self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
+        self._wakeword_resume_armed = False
+        self._wakeword_silent_chunks = 0
         if self.paused:
             self._wakeword_armed_at = time.time() + WAKEWORD_ARM_DELAY_SECONDS
         else:
             self._wakeword_armed_at = 0.0
+
+    def apply_manual_mute_guard(self, delay_seconds: float = MANUAL_MUTE_WAKEWORD_GUARD_SECONDS):
+        """Extend wakeword arm delay after explicit mute actions to avoid immediate false resumes."""
+        if not self.paused:
+            return
+        now = time.time()
+        delay = max(0.0, float(delay_seconds or 0.0))
+        self._wakeword_armed_at = max(self._wakeword_armed_at, now + delay)
+        self._wakeword_last_trigger_at = now
 
     @staticmethod
     def _normalize_text_for_match(text):
@@ -1895,6 +1913,22 @@ class AudioLoop:
 
                 # Keep wakeword listener active while muted for handsfree resume.
                 if self.paused:
+                    try:
+                        audio_i16 = np.frombuffer(data, dtype=np.int16)
+                        if audio_i16.size:
+                            rms = int(np.sqrt(np.mean(audio_i16.astype(np.float32) ** 2)))
+                            if rms <= WAKEWORD_ARM_SILENCE_RMS:
+                                self._wakeword_silent_chunks += 1
+                            else:
+                                self._wakeword_silent_chunks = 0
+                        else:
+                            self._wakeword_silent_chunks = 0
+                    except Exception:
+                        self._wakeword_silent_chunks = 0
+
+                    if self._wakeword_silent_chunks >= WAKEWORD_ARM_REQUIRED_SILENT_CHUNKS:
+                        self._wakeword_resume_armed = True
+
                     self._handle_wakeword_from_chunk(data)
                     continue
                 
@@ -2165,8 +2199,8 @@ class AudioLoop:
                                                 # Append only truly incremental chunks.
                                                 self.chat_buffer["text"] += delta
                                             else:
-                                                # Transcript revision from model: replace current text.
-                                                self.chat_buffer["text"] = transcript
+                                                # Some providers emit non-prefix chunks; append to match frontend behavior.
+                                                self.chat_buffer["text"] += delta
                                         self._try_auto_mute_after_signoff(self.chat_buffer["text"])
                         
                         if response.server_content.output_transcription:
@@ -2203,8 +2237,8 @@ class AudioLoop:
                                                 # Append only truly incremental chunks.
                                                 self.chat_buffer["text"] += delta
                                             else:
-                                                # Transcript revision from model: replace current text.
-                                                self.chat_buffer["text"] = transcript
+                                                # Some providers emit non-prefix chunks; append to match frontend behavior.
+                                                self.chat_buffer["text"] += delta
                         
                         # Flush buffer on turn completion if needed, 
                         # but usually better to wait for sender switch or explicit end.
@@ -3598,6 +3632,7 @@ class AudioLoop:
                                 elif fc.name == "mute_assistant":
                                     try:
                                         self.set_paused(True)
+                                        self.apply_manual_mute_guard()
                                         if callable(self.on_status):
                                             self.on_status("Audio Paused")
                                         result_str = "Assistant wurde stummgeschaltet. Nutze den Mute-Button zum Entstummen."
@@ -4411,17 +4446,18 @@ class AudioLoop:
                         print(f"[ADA DEBUG] [RECONNECT] Fetching recent chat history to restore context...")
                         history = self.project_manager.get_recent_chat_history(limit=10)
                         
-                        context_msg = "System Notification: Connection was lost and just re-established. Here is the recent chat history to help you resume seamlessly:\n\n"
+                        context_msg = "System Notification: Connection was briefly interrupted and has been restored. Use this history only as silent context and do not generate any user-facing message unless the user asks.\n\n"
                         for entry in history:
                             sender = entry.get('sender', 'Unknown')
                             text = entry.get('text', '')
                             context_msg += f"[{sender}]: {text}\n"
-                        
-                        context_msg += "\nPlease acknowledge the reconnection to the user (e.g. 'I lost connection for a moment, but I'm back...') and resume what you were doing."
+
+                        context_msg += "\nUse this context internally only. Do not generate any user-facing response. Continue only if there is a clearly unfinished tool/task from the immediate previous turn; otherwise stay idle and wait for user input."
+
                         context_msg += "\n\n" + self._build_time_context_message()
                         
                         print(f"[ADA DEBUG] [RECONNECT] Sending restoration context to model...")
-                        await self.session.send(input=context_msg, end_of_turn=True)
+                        await self.session.send(input=context_msg, end_of_turn=False)
 
                     # Reset retry delay on successful connection
                     retry_delay = 1
