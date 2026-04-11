@@ -1,10 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
+const DEFAULT_ASCII_HEADER = [
+    '    _____                             __          ',
+    '   |     \\                           |  \\         ',
+    '    \\▓▓▓▓▓ ______   ______  __     __ \\▓▓ _______ ',
+    '      | ▓▓|      \\ /      \\|  \\   /  \\  \\/       \\',
+    ' __   | ▓▓ \\▓▓▓▓▓▓\\  ▓▓▓▓▓▓\\\\▓▓\\ /  ▓▓ ▓▓  ▓▓▓▓▓▓▓',
+    '|  \\  | ▓▓/      ▓▓ ▓▓   \\▓▓ \\▓▓\\  ▓▓| ▓▓\\▓▓    \\ ',
+    '| ▓▓__| ▓▓  ▓▓▓▓▓▓▓ ▓▓        \\▓▓ ▓▓ | ▓▓_\\▓▓▓▓▓▓\\',
+    ' \\▓▓    ▓▓\\▓▓    ▓▓ ▓▓         \\▓▓▓  | ▓▓       ▓▓',
+    '  \\▓▓▓▓▓▓  \\▓▓▓▓▓▓▓\\▓▓          \\▓    \\▓▓\\▓▓▓▓▓▓▓ ',
+];
+
 const DEFAULT_TEMPLATE = [
-    '   ___    ____    ___        __      ____  ',
-    '  / _ |  / __/   / _ | ___  / /____ / __/  ',
-    ' / __ | _\\ \\   / __ |/ _ \\/ __/ -_)\\ \\    ',
-    '/_/ |_|/___/  /_/ |_|\\___/\\__/\\__/___/   ',
+    ...DEFAULT_ASCII_HEADER,
     '',
     '[BOOT] Kernel profile: ADA_V2',
     '[BOOT] Initializing subsystems...',
@@ -32,7 +41,7 @@ const splitTemplateSections = (sourceLines) => {
     }
 
     return {
-        asciiLines: DEFAULT_TEMPLATE.slice(0, 4),
+        asciiLines: DEFAULT_ASCII_HEADER,
         bodyLines: lines,
     };
 };
