@@ -989,6 +989,16 @@ async def resume_audio(sid):
     global audio_loop
     if audio_loop:
         audio_loop.set_paused(False)
+        if hasattr(audio_loop, "mark_unmute_context_pending"):
+            audio_loop.mark_unmute_context_pending()
+        if audio_loop.session:
+            try:
+                await audio_loop.session.send(
+                    input="System Notification: Audio input has been resumed manually via UI. You are no longer muted.",
+                    end_of_turn=False,
+                )
+            except Exception as e:
+                print(f"[SERVER DEBUG] Failed to sync manual unmute state to model: {e}")
         print("Resuming Audio")
         await sio.emit('status', {'msg': 'Audio Resumed'})
 
@@ -1051,6 +1061,9 @@ async def user_input(sid, data):
         return
 
     if text:
+        if hasattr(audio_loop, "_inject_unmute_context_if_pending"):
+            await audio_loop._inject_unmute_context_if_pending()
+
         normalized_text = str(text).strip().lower()
         memory_quality_patterns = [
             r"\b(memory\s+quality\s+check|check\s+memory\s+quality)\b",

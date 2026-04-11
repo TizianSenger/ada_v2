@@ -253,6 +253,7 @@ function App() {
     const aiDisplayNameInitializedRef = useRef(false);
     const powerOffPinModalOpenRef = useRef(false);
     const lastWakewordToneAtRef = useRef(0);
+    const lastMuteToneAtRef = useRef(0);
 
     const pushBootEvent = (line) => {
         const msg = String(line || '').trim();
@@ -680,6 +681,17 @@ function App() {
             }
 
             if (data?.msg === 'Audio Paused') {
+                const now = Date.now();
+                if (now - lastMuteToneAtRef.current > 300) {
+                    lastMuteToneAtRef.current = now;
+                    try {
+                        const tone = new Audio('/sounds/microfone-unmute.wav');
+                        tone.volume = 0.66;
+                        void tone.play();
+                    } catch (_e) {
+                        // Ignore audio playback failures (missing file/device autoplay restrictions).
+                    }
+                }
                 setIsMuted(true);
             } else if (data?.msg === 'Audio Resumed') {
                 setIsMuted(false);

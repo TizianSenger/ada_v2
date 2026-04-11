@@ -533,6 +533,7 @@ class AudioLoop:
         self._last_output_transcription = ""
         self._last_user_text_for_auto_mute = ""
         self._auto_mute_triggered_for_turn = False
+        self._pending_unmute_context_on_next_user_turn = False
 
         self.audio_in_queue = None
         self.out_queue = None
@@ -829,6 +830,7 @@ class AudioLoop:
 
                 self._wakeword_last_trigger_at = now
                 self.set_paused(False)
+                self._pending_unmute_context_on_next_user_turn = True
 
                 matched_name = model_name or self.wakeword_model_name or "wakeword"
                 print(f"[ADA] Wake word detected: {matched_name} ({score:.3f})")
@@ -1200,6 +1202,23 @@ class AudioLoop:
         delay = max(0.0, float(delay_seconds or 0.0))
         self._wakeword_armed_at = max(self._wakeword_armed_at, now + delay)
         self._wakeword_last_trigger_at = now
+
+    def mark_unmute_context_pending(self):
+        self._pending_unmute_context_on_next_user_turn = True
+
+    async def _inject_unmute_context_if_pending(self):
+        if not self._pending_unmute_context_on_next_user_turn:
+            return
+        self._pending_unmute_context_on_next_user_turn = False
+        if not self.session:
+            return
+        try:
+            await self.session.send(
+                input="System Notification: Audio input is active again. You are not muted anymore.",
+                end_of_turn=False,
+            )
+        except Exception as e:
+            print(f"[ADA DEBUG] Failed to inject unmute context: {e}")
 
     @staticmethod
     def _normalize_text_for_match(text):
@@ -1929,7 +1948,15 @@ class AudioLoop:
                     if self._wakeword_silent_chunks >= WAKEWORD_ARM_REQUIRED_SILENT_CHUNKS:
                         self._wakeword_resume_armed = True
 
-                    self._handle_wakeword_from_chunk(data)
+                    resumed_by_wakeword = self._handle_wakeword_from_chunk(data)
+                    if resumed_by_wakeword and self.session:
+                        try:
+                            await self.session.send(
+                                input="System Notification: Audio input has been resumed via wakeword. You are no longer muted.",
+                                end_of_turn=False,
+                            )
+                        except Exception as e:
+                            print(f"[ADA DEBUG] [WAKEWORD] Failed to sync unmute state to model: {e}")
                     continue
                 
                 # 1. Send Audio
@@ -2163,6 +2190,7 @@ class AudioLoop:
                         if response.server_content.input_transcription:
                             transcript = response.server_content.input_transcription.text
                             if transcript:
+                                await self._inject_unmute_context_if_pending()
                                 self._last_user_text_for_auto_mute = str(transcript)
                                 self._auto_mute_triggered_for_turn = False
                                 if self.chat_buffer["sender"] != "User":
