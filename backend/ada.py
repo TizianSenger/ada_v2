@@ -41,6 +41,11 @@ WAKEWORD_ARM_DELAY_SECONDS = 1.2
 MANUAL_MUTE_WAKEWORD_GUARD_SECONDS = 6.0
 WAKEWORD_ARM_SILENCE_RMS = 220
 WAKEWORD_ARM_REQUIRED_SILENT_CHUNKS = 10
+WAKEWORD_REQUIRED_HITS = 2
+WAKEWORD_MIN_SCORE = 0.68
+WAKEWORD_MIN_AVG_SCORE = 0.78
+WAKEWORD_MIN_PEAK_SCORE = 0.86
+WAKEWORD_COOLDOWN_SECONDS = 1.5
 
 MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 DEFAULT_MODE = "camera"
@@ -361,10 +366,19 @@ def resolve_wakeword_settings():
     if not model_name:
         model_name = "hey_jarvis"
 
-    try:
-        threshold = float(data.get("wakeword_threshold", 0.55))
-    except (TypeError, ValueError):
-        threshold = 0.55
+    sensitivity_raw = data.get("wakeword_sensitivity", None)
+    if sensitivity_raw is not None:
+        try:
+            sensitivity = int(sensitivity_raw)
+        except (TypeError, ValueError):
+            sensitivity = 6
+        sensitivity = max(1, min(10, sensitivity))
+        threshold = 0.9 - (sensitivity * 0.04)
+    else:
+        try:
+            threshold = float(data.get("wakeword_threshold", 0.55))
+        except (TypeError, ValueError):
+            threshold = 0.55
     threshold = max(0.1, min(0.99, threshold))
 
     return {
@@ -609,6 +623,10 @@ class AudioLoop:
         self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
         self._wakeword_resume_armed = False
         self._wakeword_silent_chunks = 0
+        self._wakeword_hit_streak = 0
+        self._wakeword_hit_score_sum = 0.0
+        self._wakeword_hit_score_peak = 0.0
+        self._wakeword_cooldown_until = 0.0
 
         if self.wakeword_enabled:
             self._init_wakeword_model()
@@ -734,10 +752,25 @@ class AudioLoop:
                 inference_framework="onnx",
             )
             self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
+            self._wakeword_cooldown_until = 0.0
             print(f"[ADA] Wake word detector initialized (model={self.wakeword_model_name}, threshold={self.wakeword_threshold:.2f}).")
         except Exception as e:
             self._wakeword_model = None
             print(f"[ADA] Wake word detector init failed: {e}")
+
+    def _reset_wakeword_detector_state(self):
+        detector = self._wakeword_model
+        if not detector:
+            return
+        for method_name in ("reset", "reset_states", "reset_state"):
+            reset_method = getattr(detector, method_name, None)
+            if not callable(reset_method):
+                continue
+            try:
+                reset_method()
+            except Exception as e:
+                print(f"[ADA] Wakeword detector reset failed ({method_name}): {e}")
+            break
 
     def set_wakeword_config(self, enabled=None, threshold=None, model_name=None):
         if enabled is not None:
@@ -791,15 +824,8 @@ class AudioLoop:
                 if desired in key_norm:
                     return str(key), self._extract_wakeword_score(value)
 
-        best_key = None
-        best_score = 0.0
-        for key, value in prediction_dict.items():
-            score = self._extract_wakeword_score(value)
-            if best_key is None or score > best_score:
-                best_key = str(key)
-                best_score = score
-
-        return best_key, best_score
+        # Do not fallback to "best" score; only the configured wakeword model may unlock.
+        return None, 0.0
 
     def _handle_wakeword_from_chunk(self, chunk_bytes):
         if not (self.paused and self.wakeword_enabled and self._wakeword_model):
@@ -808,6 +834,8 @@ class AudioLoop:
             return False
 
         now = time.time()
+        if time.monotonic() < self._wakeword_cooldown_until:
+            return False
         if now < self._wakeword_armed_at:
             return False
         if now - self._wakeword_last_trigger_at < 2.0:
@@ -825,11 +853,33 @@ class AudioLoop:
 
                 prediction = self._wakeword_model.predict(frame)
                 model_name, score = self._wakeword_match_score(prediction)
-                if score < self.wakeword_threshold:
+                threshold = max(float(self.wakeword_threshold), WAKEWORD_MIN_SCORE)
+                if not model_name or score < threshold:
+                    self._wakeword_hit_streak = 0
+                    self._wakeword_hit_score_sum = 0.0
+                    self._wakeword_hit_score_peak = 0.0
+                    continue
+
+                self._wakeword_hit_streak += 1
+                self._wakeword_hit_score_sum += float(score)
+                self._wakeword_hit_score_peak = max(self._wakeword_hit_score_peak, float(score))
+                if self._wakeword_hit_streak < WAKEWORD_REQUIRED_HITS:
+                    continue
+
+                avg_score = self._wakeword_hit_score_sum / max(1, self._wakeword_hit_streak)
+                if avg_score < max(threshold, WAKEWORD_MIN_AVG_SCORE) and self._wakeword_hit_score_peak < max(threshold, WAKEWORD_MIN_PEAK_SCORE):
+                    self._wakeword_hit_streak = 0
+                    self._wakeword_hit_score_sum = 0.0
+                    self._wakeword_hit_score_peak = 0.0
                     continue
 
                 self._wakeword_last_trigger_at = now
+                self._wakeword_cooldown_until = time.monotonic() + WAKEWORD_COOLDOWN_SECONDS
+                self._wakeword_hit_streak = 0
+                self._wakeword_hit_score_sum = 0.0
+                self._wakeword_hit_score_peak = 0.0
                 self.set_paused(False)
+                self._reset_wakeword_detector_state()
                 self._pending_unmute_context_on_next_user_turn = True
 
                 matched_name = model_name or self.wakeword_model_name or "wakeword"
@@ -1189,6 +1239,11 @@ class AudioLoop:
         self._wakeword_pcm_buffer = np.array([], dtype=np.int16)
         self._wakeword_resume_armed = False
         self._wakeword_silent_chunks = 0
+        self._wakeword_hit_streak = 0
+        self._wakeword_hit_score_sum = 0.0
+        self._wakeword_hit_score_peak = 0.0
+        self._wakeword_cooldown_until = 0.0
+        self._reset_wakeword_detector_state()
         if self.paused:
             self._wakeword_armed_at = time.time() + WAKEWORD_ARM_DELAY_SECONDS
         else:

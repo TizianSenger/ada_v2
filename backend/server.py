@@ -191,8 +191,32 @@ DEFAULT_SETTINGS = {
     "spotify_connected_user": {},
     "wakeword_enabled": False,
     "wakeword_model": "hey_jarvis",
+    "wakeword_sensitivity": 6,
     "wakeword_threshold": 0.55,
 }
+
+
+def _clamp_wakeword_sensitivity(value):
+    try:
+        num = int(value)
+    except (TypeError, ValueError):
+        num = 6
+    return max(1, min(10, num))
+
+
+def _wakeword_threshold_from_sensitivity(sensitivity):
+    s = _clamp_wakeword_sensitivity(sensitivity)
+    return max(0.1, min(0.99, 0.9 - (s * 0.04)))
+
+
+def _wakeword_sensitivity_from_threshold(threshold):
+    try:
+        t = float(threshold)
+    except (TypeError, ValueError):
+        t = 0.55
+    t = max(0.1, min(0.99, t))
+    mapped = round((0.9 - t) / 0.04)
+    return _clamp_wakeword_sensitivity(mapped)
 
 SETTINGS = DEFAULT_SETTINGS.copy()
 SETTINGS["tool_enabled"] = dict(DEFAULT_SETTINGS["tool_permissions"])
@@ -2384,12 +2408,19 @@ async def update_settings(sid, data):
         value = str(data.get("wakeword_model", "") or "").strip()
         SETTINGS["wakeword_model"] = value or "hey_jarvis"
 
+    if "wakeword_sensitivity" in data:
+        sensitivity = _clamp_wakeword_sensitivity(data.get("wakeword_sensitivity", 6))
+        SETTINGS["wakeword_sensitivity"] = sensitivity
+        SETTINGS["wakeword_threshold"] = _wakeword_threshold_from_sensitivity(sensitivity)
+
     if "wakeword_threshold" in data:
         try:
             threshold = float(data.get("wakeword_threshold", 0.55))
         except (TypeError, ValueError):
             threshold = float(SETTINGS.get("wakeword_threshold", 0.55))
         SETTINGS["wakeword_threshold"] = max(0.1, min(0.99, threshold))
+        if "wakeword_sensitivity" not in data:
+            SETTINGS["wakeword_sensitivity"] = _wakeword_sensitivity_from_threshold(SETTINGS["wakeword_threshold"])
 
     if audio_loop and hasattr(audio_loop, "set_wakeword_config"):
         audio_loop.set_wakeword_config(

@@ -213,6 +213,25 @@ const WAKEWORD_MODEL_OPTIONS = [
     { id: 'timer', label: 'Timer' },
     { id: 'weather', label: 'Weather' },
 ];
+
+const clampWakewordSensitivity = (value) => {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return 6;
+    return Math.max(1, Math.min(10, parsed));
+};
+
+const sensitivityToThreshold = (sensitivity) => {
+    const s = clampWakewordSensitivity(sensitivity);
+    // 1 = strict (~0.86), 10 = sensitive (~0.50)
+    return Math.max(0.1, Math.min(0.99, 0.9 - (s * 0.04)));
+};
+
+const thresholdToSensitivity = (threshold) => {
+    const t = Number.parseFloat(threshold);
+    const safeT = Number.isFinite(t) ? Math.max(0.1, Math.min(0.99, t)) : 0.55;
+    const mapped = Math.round((0.9 - safeT) / 0.04);
+    return clampWakewordSensitivity(mapped);
+};
 const SPLASH_THEME_OPTIONS = [
     {
         id: 'CYAN_TERMINAL',
@@ -485,6 +504,7 @@ const SettingsWindow = ({
     const [wakewordEnabled, setWakewordEnabled] = useState(false);
     const [wakewordModel, setWakewordModel] = useState('hey_jarvis');
     const [wakewordThreshold, setWakewordThreshold] = useState('0.55');
+    const [wakewordSensitivity, setWakewordSensitivity] = useState(6);
     const [wakewordMessage, setWakewordMessage] = useState('');
     const [googleConnectMessage, setGoogleConnectMessage] = useState('');
     const [googleConnecting, setGoogleConnecting] = useState(false);
@@ -610,8 +630,12 @@ const SettingsWindow = ({
                 setSpotifyLastDeviceId(String(settings.spotify_last_device_id || ''));
                 setWakewordEnabled(Boolean(settings.wakeword_enabled));
                 setWakewordModel(String(settings.wakeword_model || 'hey_jarvis'));
-                const thresholdRaw = Number.parseFloat(settings.wakeword_threshold);
-                const thresholdValue = Number.isFinite(thresholdRaw) ? Math.max(0.1, Math.min(0.99, thresholdRaw)) : 0.55;
+                const sensitivityRaw = Number.parseInt(settings.wakeword_sensitivity, 10);
+                const sensitivityValue = Number.isFinite(sensitivityRaw)
+                    ? clampWakewordSensitivity(sensitivityRaw)
+                    : thresholdToSensitivity(settings.wakeword_threshold);
+                const thresholdValue = sensitivityToThreshold(sensitivityValue);
+                setWakewordSensitivity(sensitivityValue);
                 setWakewordThreshold(thresholdValue.toFixed(2));
                 setDefaultWeatherLocation(settings.default_weather_location || 'Berlin,DE');
                 setVoiceName(settings.voice_name || 'Kore');
@@ -1074,19 +1098,21 @@ const SettingsWindow = ({
 
     const saveWakewordSettings = () => {
         const model = String(wakewordModel || '').trim() || 'hey_jarvis';
-        const parsed = Number.parseFloat(wakewordThreshold);
-        const threshold = Number.isFinite(parsed) ? Math.max(0.1, Math.min(0.99, parsed)) : 0.55;
+        const sensitivity = clampWakewordSensitivity(wakewordSensitivity);
+        const threshold = sensitivityToThreshold(sensitivity);
 
         setWakewordModel(model);
+        setWakewordSensitivity(sensitivity);
         setWakewordThreshold(threshold.toFixed(2));
         socket.emit('update_settings', {
             wakeword_enabled: Boolean(wakewordEnabled),
             wakeword_model: model,
+            wakeword_sensitivity: sensitivity,
             wakeword_threshold: threshold,
         });
         setWakewordMessage(
             wakewordEnabled
-                ? `Wake word enabled (${model}, threshold ${threshold.toFixed(2)}).`
+                ? `Wake word enabled (${model}, sensitivity ${sensitivity}/10, threshold ${threshold.toFixed(2)}).`
                 : 'Wake word disabled.'
         );
     };
@@ -1095,12 +1121,13 @@ const SettingsWindow = ({
         const nextEnabled = !wakewordEnabled;
         setWakewordEnabled(nextEnabled);
         const model = String(wakewordModel || '').trim() || 'hey_jarvis';
-        const parsed = Number.parseFloat(wakewordThreshold);
-        const threshold = Number.isFinite(parsed) ? Math.max(0.1, Math.min(0.99, parsed)) : 0.55;
+        const sensitivity = clampWakewordSensitivity(wakewordSensitivity);
+        const threshold = sensitivityToThreshold(sensitivity);
 
         socket.emit('update_settings', {
             wakeword_enabled: nextEnabled,
             wakeword_model: model,
+            wakeword_sensitivity: sensitivity,
             wakeword_threshold: threshold,
         });
 
@@ -1796,20 +1823,30 @@ const SettingsWindow = ({
                                 <option key={item.id} value={item.id}>{item.label}</option>
                             ))}
                         </select>
-                        <input
-                            type="number"
-                            min="0.1"
-                            max="0.99"
-                            step="0.01"
-                            value={wakewordThreshold}
-                            onChange={(e) => setWakewordThreshold(e.target.value)}
-                            placeholder="Detection threshold"
-                            className="w-full bg-gray-900 border border-cyan-800 rounded p-2 text-xs text-cyan-100 focus:border-cyan-400 outline-none"
-                        />
+                        <div className="w-full bg-gray-900 border border-cyan-800 rounded p-2">
+                            <div className="flex items-center justify-between text-[10px] text-cyan-300/80 mb-1">
+                                <span>Sensitivity</span>
+                                <span>{wakewordSensitivity}/10</span>
+                            </div>
+                            <input
+                                type="range"
+                                min="1"
+                                max="10"
+                                step="1"
+                                value={wakewordSensitivity}
+                                onChange={(e) => {
+                                    const s = clampWakewordSensitivity(e.target.value);
+                                    setWakewordSensitivity(s);
+                                    setWakewordThreshold(sensitivityToThreshold(s).toFixed(2));
+                                }}
+                                className="w-full accent-cyan-400"
+                            />
+                            <div className="text-[10px] text-cyan-500/70 mt-1">Threshold: {wakewordThreshold}</div>
+                        </div>
                     </div>
 
                     <div className="text-[10px] text-cyan-500/70">
-                        Listens for wake word only while ADA is muted. Lower threshold is more sensitive (0.45-0.60 is usually good).
+                        Listens for wake word only while ADA is muted. Higher sensitivity means easier trigger.
                     </div>
 
                     <div className="flex items-center justify-end mt-1">
