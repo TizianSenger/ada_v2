@@ -2125,6 +2125,144 @@ async def spotify_add_current_to_favorites(sid, data=None):
             room=sid,
         )
 
+
+@sio.event
+async def spotify_remove_current_from_favorites(sid, data=None):
+    try:
+        result = await asyncio.to_thread(spotify_agent.remove_current_from_favorites)
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': True,
+                'action': 'remove_current_from_favorites',
+                'result': result,
+                'message': 'Current track removed from Spotify favorites.',
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': False,
+                'action': 'remove_current_from_favorites',
+                'message': f'Failed to remove current track from favorites: {str(e)}',
+            },
+            room=sid,
+        )
+
+
+@sio.event
+async def spotify_player_next(sid, data=None):
+    payload = data or {}
+    device = str(payload.get('device', '') or '').strip()
+    try:
+        result = await asyncio.to_thread(spotify_agent.next_track, device)
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': True,
+                'action': 'next',
+                'result': result,
+                'message': 'Skipped to next track.',
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': False,
+                'action': 'next',
+                'message': f'Failed to skip to next track: {str(e)}',
+            },
+            room=sid,
+        )
+
+
+@sio.event
+async def spotify_player_previous(sid, data=None):
+    payload = data or {}
+    device = str(payload.get('device', '') or '').strip()
+    try:
+        result = await asyncio.to_thread(spotify_agent.previous_track, device)
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': True,
+                'action': 'previous',
+                'result': result,
+                'message': 'Went to previous track.',
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': False,
+                'action': 'previous',
+                'message': f'Failed to go to previous track: {str(e)}',
+            },
+            room=sid,
+        )
+
+
+@sio.event
+async def spotify_player_toggle_shuffle(sid, data=None):
+    payload = data or {}
+    device = str(payload.get('device', '') or '').strip()
+    try:
+        result = await asyncio.to_thread(spotify_agent.toggle_shuffle, device)
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': True,
+                'action': 'toggle_shuffle',
+                'result': result,
+                'message': f"Shuffle set to {'On' if bool(result.get('shuffle')) else 'Off'}.",
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': False,
+                'action': 'toggle_shuffle',
+                'message': f'Failed to toggle shuffle: {str(e)}',
+            },
+            room=sid,
+        )
+
+
+@sio.event
+async def spotify_player_cycle_repeat(sid, data=None):
+    payload = data or {}
+    device = str(payload.get('device', '') or '').strip()
+    try:
+        result = await asyncio.to_thread(spotify_agent.cycle_repeat, device)
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': True,
+                'action': 'cycle_repeat',
+                'result': result,
+                'message': f"Repeat set to {str(result.get('repeat', 'off'))}.",
+            },
+            room=sid,
+        )
+    except Exception as e:
+        await sio.emit(
+            'spotify_player_action_result',
+            {
+                'ok': False,
+                'action': 'cycle_repeat',
+                'message': f'Failed to cycle repeat mode: {str(e)}',
+            },
+            room=sid,
+        )
+
 @sio.event
 async def update_settings(sid, data):
     # Generic update

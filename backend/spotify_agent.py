@@ -558,6 +558,46 @@ class SpotifyAgent:
             "track_id": track_id,
         }
 
+    def remove_current_from_favorites(self):
+        sp = self._get_user_client()
+        playback = sp.current_playback() or {}
+        item = playback.get("item") or {}
+        track_id = str(item.get("id", "") or "").strip()
+        if not track_id:
+            raise RuntimeError("Kein aktiver Track verfuegbar.")
+
+        sp.current_user_saved_tracks_delete([track_id])
+        return {
+            "ok": True,
+            "track_id": track_id,
+        }
+
+    def toggle_shuffle(self, device: str = ""):
+        sp = self._get_user_client()
+        device_id = self._resolve_device_id(sp, device)
+        playback = self._current_playback_for_device(sp, device_id) or (sp.current_playback() or {})
+        current_shuffle = bool(playback.get("shuffle_state", False))
+        target_shuffle = not current_shuffle
+        result = self.set_playback_mode(shuffle=target_shuffle, device=device)
+        result["shuffle"] = target_shuffle
+        return result
+
+    def cycle_repeat(self, device: str = ""):
+        sp = self._get_user_client()
+        device_id = self._resolve_device_id(sp, device)
+        playback = self._current_playback_for_device(sp, device_id) or (sp.current_playback() or {})
+        current_repeat = str(playback.get("repeat_state", "off") or "off").strip().lower()
+        order = ["off", "context", "track"]
+        try:
+            idx = order.index(current_repeat)
+        except ValueError:
+            idx = 0
+        next_repeat = order[(idx + 1) % len(order)]
+
+        result = self.set_playback_mode(repeat=next_repeat, device=device)
+        result["repeat"] = next_repeat
+        return result
+
     def list_playlists(self, limit: int = 20):
         final_limit = self._normalize_limit(limit, 20, 1, 50)
         sp = self._get_user_client()

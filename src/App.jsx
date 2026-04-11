@@ -2253,6 +2253,31 @@ function App() {
         socket.emit('spotify_add_current_to_favorites');
     };
 
+    const handleRemoveCurrentSpotifyFromFavorites = () => {
+        if (!socketConnected) return;
+        socket.emit('spotify_remove_current_from_favorites');
+    };
+
+    const handleSpotifyPlayerNext = () => {
+        if (!socketConnected) return;
+        socket.emit('spotify_player_next');
+    };
+
+    const handleSpotifyPlayerPrevious = () => {
+        if (!socketConnected) return;
+        socket.emit('spotify_player_previous');
+    };
+
+    const handleSpotifyPlayerToggleShuffle = () => {
+        if (!socketConnected) return;
+        socket.emit('spotify_player_toggle_shuffle');
+    };
+
+    const handleSpotifyPlayerCycleRepeat = () => {
+        if (!socketConnected) return;
+        socket.emit('spotify_player_cycle_repeat');
+    };
+
     const detailViewTop = elementPositions.visualizer.y - (elementSizes.visualizer.h / 2);
     const chatBottom = elementPositions.chat.y + elementSizes.chat.h;
     const detailViewHeight = Math.max(320, chatBottom - detailViewTop);
@@ -2712,6 +2737,11 @@ function App() {
                         <SpotifyPlayerViewer
                             playerState={spotifyPlayerState}
                             onAddToFavorites={handleAddCurrentSpotifyToFavorites}
+                            onRemoveFromFavorites={handleRemoveCurrentSpotifyFromFavorites}
+                            onNext={handleSpotifyPlayerNext}
+                            onPrevious={handleSpotifyPlayerPrevious}
+                            onToggleShuffle={handleSpotifyPlayerToggleShuffle}
+                            onCycleRepeat={handleSpotifyPlayerCycleRepeat}
                         />
                     </div>
                 )}

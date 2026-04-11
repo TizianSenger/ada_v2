@@ -150,24 +150,39 @@ const ModeHeader = ({ activeMode, toolPermissions = {} }) => {
         { id: 'memory', label: 'Memory', Icon: Brain },
     ].filter((mode) => isModeVisible(mode.id));
 
+    const shouldCarousel = modes.length > 7;
+
+    const renderModePill = ({ id, label, Icon }, idx = 0) => {
+        const isActive = activeMode === id;
+        return (
+            <div
+                key={`${id}-${idx}`}
+                className={`mode-pill flex items-center gap-1 px-2 py-1 rounded-full text-[10px] uppercase tracking-wider border transition-all duration-300 ${isActive
+                    ? 'border-cyan-400/70 bg-cyan-500/15 text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.35)]'
+                    : 'border-cyan-900/50 bg-black/30 text-cyan-700/80'
+                    }`}
+                title={label}
+            >
+                <Icon size={12} />
+                <span>{label}</span>
+            </div>
+        );
+    };
+
     return (
-        <div className="h-10 border-b border-cyan-900/40 bg-black/25 px-3 flex items-center justify-center gap-2">
-            {modes.map(({ id, label, Icon }) => {
-                const isActive = activeMode === id;
-                return (
-                    <div
-                        key={id}
-                        className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] uppercase tracking-wider border transition-all duration-300 ${isActive
-                            ? 'border-cyan-400/70 bg-cyan-500/15 text-cyan-200 shadow-[0_0_12px_rgba(34,211,238,0.35)]'
-                            : 'border-cyan-900/50 bg-black/30 text-cyan-700/80'
-                            }`}
-                        title={label}
-                    >
-                        <Icon size={12} />
-                        <span>{label}</span>
+        <div className="h-10 border-b border-cyan-900/40 bg-black/25 px-3 flex items-center overflow-hidden">
+            {!shouldCarousel && (
+                <div className="w-full flex items-center justify-center gap-2">
+                    {modes.map((mode, idx) => renderModePill(mode, idx))}
+                </div>
+            )}
+            {shouldCarousel && (
+                <div className="mode-carousel-mask w-full">
+                    <div className="mode-carousel-track">
+                        {[...modes, ...modes].map((mode, idx) => renderModePill(mode, idx))}
                     </div>
-                );
-            })}
+                </div>
+            )}
         </div>
     );
 };

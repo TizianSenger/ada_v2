@@ -222,6 +222,74 @@ body {
   animation: spotifyProgressMove 2.8s linear infinite;
 }
 
+.spotify-wave {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 24px;
+  height: 12px;
+  opacity: 0.6;
+}
+
+.spotify-wave span {
+  width: 2px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(to top, rgba(34, 211, 238, 0.45), rgba(74, 222, 128, 0.9));
+}
+
+@keyframes spotifyWave {
+  0% {
+    transform: scaleY(0.4);
+    opacity: 0.35;
+  }
+
+  50% {
+    transform: scaleY(1);
+    opacity: 0.95;
+  }
+
+  100% {
+    transform: scaleY(0.45);
+    opacity: 0.45;
+  }
+}
+
+.spotify-wave.is-playing span {
+  animation: spotifyWave 0.9s ease-in-out infinite;
+}
+
+.mode-carousel-mask {
+  position: relative;
+  overflow: hidden;
+}
+
+.mode-carousel-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  animation: modeCarouselScroll 20s linear infinite;
+}
+
+.mode-carousel-track:hover {
+  animation-play-state: paused;
+}
+
+.mode-pill {
+  flex-shrink: 0;
+}
+
+@keyframes modeCarouselScroll {
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(calc(-50% - 4px));
+  }
+}
+
 .boot-overlay {
   --boot-bg-0: #02070a;
   --boot-bg-1: #04131a;
